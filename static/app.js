@@ -19,16 +19,10 @@ class VideoTranscriber {
       en: {
         title:                   'AI Video Transcriber',
         subtitle:                'Automatic transcription, AI summary, and original video download for 30+ platforms',
-        video_url_placeholder:   'Paste YouTube, Tiktok, Bilibili or other platform video URLs...',
+        video_url_placeholder:   'Paste a video URL, or a Douyin creator page (douyin.com/user/...) to transcribe all their videos...',
         start_transcription:     'Transcribe',
-        ai_settings:             'AI Settings',
-        model_base_url:          'Model API Base URL',
-        model_base_url_placeholder: 'https://openrouter.ai/api/v1',
-        api_key:                 'API Key',
-        api_key_placeholder:     'sk-...',
-        fetch_models:            'Fetch',
         model_select:            'Model',
-        model_default:           '— use server default —',
+        model_default:           '— server default —',
         summary_language:        'Summary Language',
         processing_progress:     'Processing',
         preparing:               'Preparing…',
@@ -54,14 +48,13 @@ class VideoTranscriber {
         no_subtitle:             'No subtitles found, downloading audio…',
         mode_subtitle:           '⚡ Subtitle',
         mode_whisper:            '🎙 Whisper',
+        mode_channel:            '🎬 Creator',
         completed:               'Done!',
         error_invalid_url:       'Please enter a valid video URL',
         error_processing_failed: 'Processing failed: ',
         error_no_download:       'No file available for download',
         error_download_failed:   'Download failed: ',
-        fetching_models:         'Fetching models…',
-        models_loaded:           (n) => `${n} models loaded`,
-        models_error:            'Failed to fetch models',
+        models_error:            'Failed to load models',
         upload_or:               'or drop your files',
         upload_formats:          '.mp3 · .mp4 · .wav · .m4a · .webm · .mkv · .ogg · .flac',
         upload_files_btn:        'Upload files',
@@ -75,21 +68,19 @@ class VideoTranscriber {
         download_audio:          'Download original audio',
         preparing_video:         'Preparing original video…',
         error_no_video:          'No video available for download',
-        no_speech_notice:        'No speech detected in this video, so there is nothing to transcribe. Summary and translation are skipped — the original video is still available below.',
+         no_speech_notice:        'No speech detected in this video, so there is nothing to transcribe. Summary and translation are skipped — the original video is still available below.',
+         channel_videos:          (n) => `Creator videos found: ${n}`,
+         channel_parsing:         'Parsing creator page…',
+         channel_transcribing:    (i, n) => `Transcribing video ${i}/${n}…`,
+         channel_no_speech_notice:'None of this creator\'s videos contain detectable speech, so there is nothing to transcribe and the summary is skipped.',
       },
       zh: {
         title:                   'AI 视频转录器',
-        subtitle:                '粘贴 YouTube、TikTok 或任意公开视频链接，获取转录文本、AI 摘要，并下载原视频。',
-        video_url_placeholder:   '请输入视频链接…',
+        subtitle:                '粘贴 YouTube、TikTok、抖音博主主页或任意公开视频链接，获取转录文本、AI 摘要，并下载原视频。',
+        video_url_placeholder:   '请输入视频链接，或抖音博主主页（douyin.com/user/…）批量转录其全部视频…',
         start_transcription:     '开始转录',
-        ai_settings:             'AI 设置',
-        model_base_url:          'Model API 地址',
-        model_base_url_placeholder: 'https://openrouter.ai/api/v1',
-        api_key:                 'API Key',
-        api_key_placeholder:     'sk-...',
-        fetch_models:            '获取',
         model_select:            '模型',
-        model_default:           '— 使用服务器默认 —',
+        model_default:           '— 服务器默认 —',
         summary_language:        '摘要语言',
         processing_progress:     '处理进度',
         preparing:               '准备中…',
@@ -115,14 +106,13 @@ class VideoTranscriber {
         no_subtitle:             '未找到字幕，正在下载音频…',
         mode_subtitle:           '⚡ 字幕模式',
         mode_whisper:            '🎙 Whisper 模式',
+        mode_channel:            '🎬 博主模式',
         completed:               '处理完成！',
         error_invalid_url:       '请输入有效的视频链接',
         error_processing_failed: '处理失败：',
         error_no_download:       '没有可下载的文件',
         error_download_failed:   '下载失败：',
-        fetching_models:         '正在获取模型列表…',
-        models_loaded:           (n) => `已加载 ${n} 个模型`,
-        models_error:            '获取模型失败',
+        models_error:            '加载模型列表失败',
         upload_or:               '或拖放文件到此处',
         upload_formats:          '.mp3 · .mp4 · .wav · .m4a · .webm · .mkv · .ogg · .flac',
         upload_files_btn:        '上传文件',
@@ -136,13 +126,18 @@ class VideoTranscriber {
         download_audio:          '下载原音频',
         preparing_video:         '正在准备原视频…',
         error_no_video:          '没有可下载的视频',
-        no_speech_notice:        '这个视频中未检测到任何语音，因此没有可转录的内容。摘要与翻译已跳过 —— 原视频仍可在下方下载。',
+         no_speech_notice:        '这个视频中未检测到任何语音，因此没有可转录的内容。摘要与翻译已跳过 —— 原视频仍可在下方下载。',
+         channel_videos:          (n) => `已找到博主 ${n} 个视频`,
+         channel_parsing:         '正在解析博主主页…',
+         channel_transcribing:    (i, n) => `正在转录第 ${i}/${n} 个视频…`,
+         channel_no_speech_notice:'该博主的所有视频均未检测到语音，因此没有可转录的内容，摘要已跳过。',
       }
     };
 
     this._initElements();
     this._bindEvents();
     this._loadSettings();
+    this._loadModels();
     this._switchLang('en');
   }
 
@@ -175,19 +170,13 @@ class VideoTranscriber {
     this.mediaFrame         = document.getElementById('mediaFrame');
     this.mediaMeta          = document.getElementById('mediaMeta');
     this.translationTabItem = document.getElementById('translationTabItem');
-    this.summaryTabItem     = document.getElementById('summaryTabItem');    this.noSpeechBanner     = document.getElementById('noSpeechBanner');
+    this.summaryTabItem     = document.getElementById('summaryTabItem');
+    this.noSpeechBanner     = document.getElementById('noSpeechBanner');
     this.tabBtns            = document.querySelectorAll('.tab-btn');
     this.tabItems           = document.querySelectorAll('.tab-item');
     this.tabPanes           = document.querySelectorAll('.tab-pane');
-    // settings
-    this.settingsToggle     = document.getElementById('settingsToggle');
-    this.settingsBody       = document.getElementById('settingsBody');
-    this.modelBaseUrl       = document.getElementById('modelBaseUrl');
-    this.apiKeyInput        = document.getElementById('apiKeyInput');
-    this.fetchModelsBtn     = document.getElementById('fetchModelsBtn');
-    this.fetchStatus        = document.getElementById('fetchStatus');
+    // settings（模型下拉由 _loadModels 从 /api/litellm/models 填充）
     this.modelSelect        = document.getElementById('modelSelect');
-    this.fetchIcon          = document.getElementById('fetchIcon');
     this.uploadZone         = document.getElementById('uploadZone');
     this.uploadPickBtn      = document.getElementById('uploadPickBtn');
     this.fileInput          = document.getElementById('fileInput');
@@ -196,6 +185,8 @@ class VideoTranscriber {
     // 当前结果对应的原视频/音频（由 _renderMedia 填充）
     this._mediaFile = null;
     this._mediaName = null;
+    // 当前结果是否为「博主模式且全部视频无语音」（无语音横幅文案切换用）
+    this._channelNoSpeech = false;
   }
 
   /* ── Events ───────────────────────────────────────────── */
@@ -206,24 +197,8 @@ class VideoTranscriber {
       this._switchLang(this.currentLang === 'en' ? 'zh' : 'en');
     });
 
-    // Settings toggle
-    this.settingsToggle.addEventListener('click', () => {
-      const open = this.settingsBody.classList.toggle('open');
-      this.settingsToggle.classList.toggle('open', open);
-    });
-
-    // Fetch models
-    this.fetchModelsBtn.addEventListener('click', () => this._fetchModels());
-
-    // Auto-fetch when both fields filled (debounced)
-    const debouncedFetch = this._debounce(() => {
-      if (this.modelBaseUrl.value.trim() && this.apiKeyInput.value.trim()) this._fetchModels();
-    }, 900);
-    this.modelBaseUrl.addEventListener('input', debouncedFetch);
-    this.apiKeyInput.addEventListener('input', debouncedFetch);
-
     // Persist settings
-    [this.modelBaseUrl, this.apiKeyInput, this.modelSelect, this.summaryLangSel, this.keepVideo].forEach(el => {
+    [this.modelSelect, this.summaryLangSel, this.keepVideo].forEach(el => {
       if (el) el.addEventListener('change', () => this._saveSettings());
     });
 
@@ -301,6 +276,11 @@ class VideoTranscriber {
         else el.textContent = v;
       }
     });
+    // 无语音横幅：博主模式（全部视频无语音）用合集文案
+    if (this._channelNoSpeech && this.noSpeechBanner) {
+      const bannerSpan = this.noSpeechBanner.querySelector('span');
+      if (bannerSpan) bannerSpan.textContent = this.t('channel_no_speech_notice');
+    }
     document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
       const v = this.t(el.dataset.i18nPlaceholder);
       if (typeof v === 'string') el.placeholder = v;
@@ -317,8 +297,6 @@ class VideoTranscriber {
   /* ── Settings persistence ─────────────────────────────── */
   _saveSettings() {
     const s = {
-      baseUrl:  this.modelBaseUrl.value,
-      apiKey:   this.apiKeyInput.value,
       model:    this.modelSelect.value,
       summaryLang: this.summaryLangSel.value,
       keepVideo: this.keepVideo ? this.keepVideo.checked : true,
@@ -331,54 +309,23 @@ class VideoTranscriber {
       const raw = localStorage.getItem('vt_settings');
       if (!raw) return;
       const s = JSON.parse(raw);
-      if (s.baseUrl)     this.modelBaseUrl.value = s.baseUrl;
-      if (s.apiKey)      this.apiKeyInput.value  = s.apiKey;
       if (s.summaryLang) this.summaryLangSel.value = s.summaryLang;
       if (this.keepVideo && typeof s.keepVideo === 'boolean') this.keepVideo.checked = s.keepVideo;
-      // Model options will be restored after fetching
+      // 旧版本存的是 baseUrl/apiKey/model：只恢复 model，待 _loadModels 填充选项后生效
       this._savedModel = s.model || '';
-
-      // Auto-open settings if credentials were saved
-      if (s.baseUrl || s.apiKey) {
-        this.settingsBody.classList.add('open');
-        this.settingsToggle.classList.add('open');
-        // Attempt to re-fetch model list silently
-        if (s.baseUrl && s.apiKey) {
-          setTimeout(() => this._fetchModels(true), 400);
-        }
-      }
     } catch (_) {}
   }
 
-  /* ── Fetch models ─────────────────────────────────────── */
-  async _fetchModels(silent = false) {
-    const baseUrl = this.modelBaseUrl.value.trim().replace(/\/$/, '');
-    const apiKey  = this.apiKeyInput.value.trim();
-
-    if (!baseUrl || !apiKey) {
-      if (!silent) this._setFetchStatus('err', this.t('api_key') + ' & URL required');
-      return;
-    }
-
-    this.fetchModelsBtn.disabled = true;
-    this.fetchIcon.className = 'fas fa-spinner fa-spin';
-    if (!silent) this._setFetchStatus('', this.t('fetching_models'));
-
+  /* ── Load litellm models (m.json) ─────────────────────── */
+  async _loadModels() {
     try {
-      const fd = new FormData();
-      fd.append('base_url', baseUrl);
-      fd.append('api_key',  apiKey);
-
-      const resp = await fetch(`${this.apiBase}/models`, { method: 'POST', body: fd });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.detail || `HTTP ${resp.status}`);
-      }
+      const resp = await fetch(`${this.apiBase}/litellm/models`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
-      const models = data.data || data.models || [];
+      const models = data.data || [];
 
-      // Rebuild select options
-      this.modelSelect.innerHTML = `<option value="">${this.t('model_default')}</option>`;
+      this.modelSelect.innerHTML =
+        `<option value="">${this.t('model_default')}</option>`;
       models.forEach(m => {
         const opt = document.createElement('option');
         opt.value = m.id;
@@ -386,28 +333,18 @@ class VideoTranscriber {
         this.modelSelect.appendChild(opt);
       });
 
-      // Restore previously selected model
-      if (this._savedModel) {
-        this.modelSelect.value = this._savedModel;
-        this._savedModel = '';
+      // 默认选中服务器默认模型；恢复上次手选
+      const saved = this._savedModel || '';
+      if (saved && models.some(m => m.id === saved)) {
+        this.modelSelect.value = saved;
+      } else if (data.default_model && models.some(m => m.id === data.default_model)) {
+        this.modelSelect.value = data.default_model;
       }
-
-      this._setFetchStatus('ok', typeof this.t('models_loaded') === 'function'
-        ? this.t('models_loaded')(models.length)
-        : `${models.length} models`);
-
+      this._savedModel = '';
     } catch (e) {
-      console.warn('Model fetch error:', e);
-      this._setFetchStatus('err', this.t('models_error') + ': ' + e.message);
-    } finally {
-      this.fetchModelsBtn.disabled = false;
-      this.fetchIcon.className = 'fas fa-sync-alt';
+      console.warn('Model list load error:', e);
+      // 列表加载失败不阻塞主流程；保留“服务器默认”选项
     }
-  }
-
-  _setFetchStatus(cls, msg) {
-    this.fetchStatus.className = 'fetch-status' + (cls ? ` ${cls}` : '');
-    this.fetchStatus.textContent = msg;
   }
 
   /* ── Transcription ────────────────────────────────────── */
@@ -429,12 +366,8 @@ class VideoTranscriber {
       fd.append('summary_language', sumLang);
       fd.append('download_video',   this.keepVideo && this.keepVideo.checked ? '1' : '0');
 
-      const apiKey  = this.apiKeyInput.value.trim();
-      const baseUrl = this.modelBaseUrl.value.trim().replace(/\/$/, '');
       const modelId = this.modelSelect.value;
-      if (apiKey)  fd.append('api_key',       apiKey);
-      if (baseUrl) fd.append('model_base_url', baseUrl);
-      if (modelId) fd.append('model_id',       modelId);
+      if (modelId) fd.append('model_id', modelId);
 
       const resp = await fetch(`${this.apiBase}/process-video`, { method: 'POST', body: fd });
       if (!resp.ok) {
@@ -486,12 +419,8 @@ class VideoTranscriber {
       fd.append('file', file, file.name);
       fd.append('summary_language', sumLang);
 
-      const apiKey  = this.apiKeyInput.value.trim();
-      const baseUrl = this.modelBaseUrl.value.trim().replace(/\/$/, '');
       const modelId = this.modelSelect.value;
-      if (apiKey)  fd.append('api_key',       apiKey);
-      if (baseUrl) fd.append('model_base_url', baseUrl);
-      if (modelId) fd.append('model_id',       modelId);
+      if (modelId) fd.append('model_id', modelId);
 
       const resp = await fetch(`${this.apiBase}/process-video`, { method: 'POST', body: fd });
       if (!resp.ok) {
@@ -582,8 +511,21 @@ class VideoTranscriber {
   _updateStage(pct, msg) {
     const m = (msg || '').toLowerCase();
 
+    // ── 抖音博主模式（含「解析/转录」字样，须先于通用判断）──────────
+    const chVideo = m.match(/第\s*(\d+)\s*\/\s*(\d+)\s*个视频/);
+    if (m.includes('博主') || m.includes('creator') || chVideo || m.includes('合集文稿')) {
+      if (chVideo) {
+        this.sp.stage = 'channel_video';
+        this.sp.target = 85;
+      } else {
+        this.sp.stage = 'channel_list';
+        this.sp.target = 40;
+      }
+      this.sp.detailMsg = msg;
+      this._setModeBadge('channel');
+    }
     // ── 字幕路径（快速）──────────────────────────────────────
-    if (m.includes('获取成功') || m.includes('subtitle found') || m.includes('字幕获取')) {
+    else if (m.includes('获取成功') || m.includes('subtitle found') || m.includes('字幕获取')) {
       this.sp.stage = 'subtitle_found';
       this.sp.target = 55;
       this._setModeBadge('subtitle');
@@ -643,12 +585,18 @@ class VideoTranscriber {
       this.modeBadge.className    = 'mode-badge whisper';
       this.modeBadge.style.display = 'inline-block';
       if (this.progressFill) this.progressFill.classList.remove('subtitle-mode');
+    } else if (mode === 'channel') {
+      this.modeBadge.textContent  = this.t('mode_channel');
+      this.modeBadge.className    = 'mode-badge channel';
+      this.modeBadge.style.display = 'inline-block';
+      if (this.progressFill) this.progressFill.classList.remove('subtitle-mode');
     }
   }
 
   _initSP() {
     this.sp.enabled = false; this.sp.current = 0; this.sp.target = 15;
     this.sp.lastServer = 0;  this.sp.startTime = Date.now(); this.sp.stage = 'preparing';
+    this.sp.detailMsg = null;
   }
   _startSP() {
     if (this.sp.interval) clearInterval(this.sp.interval);
@@ -662,7 +610,7 @@ class VideoTranscriber {
   }
   _tickSP() {
     if (!this.sp.enabled || this.sp.current >= this.sp.target) return;
-    const speeds = { subtitle: .5, parsing: .3, downloading: .18, transcribing: .14, optimizing: .22, translating: .22, summarizing: .28, finalizing: .16 };
+    const speeds = { subtitle: .5, parsing: .3, downloading: .18, transcribing: .14, optimizing: .22, translating: .22, summarizing: .28, finalizing: .16, channel_list: .3, channel_video: .12 };
     let inc = speeds[this.sp.stage] || .2;
     const remaining = this.sp.target - this.sp.current;
     if (remaining < 5) inc *= .3;
@@ -684,6 +632,9 @@ class VideoTranscriber {
       summarizing:    this.t('generating_summary'),
       finalizing:     this.t('preparing_video'),
       completed:      this.t('completed'),
+      // 博主模式：模拟进度沿用最近一条服务器消息（含「第 x/n 个视频」等细节）
+      channel_list:   this.sp.detailMsg || this.t('channel_parsing'),
+      channel_video:  this.sp.detailMsg || this.t('processing'),
     };
     return map[this.sp.stage] || this.t('processing');
   }
@@ -696,8 +647,23 @@ class VideoTranscriber {
     // Translate common server messages — more specific checks first
     const m = (msg || '').toLowerCase();
     let label = msg;
+    // ── Douyin creator (channel) path — must precede generic 解析/转录/下载 ──
+    const chVideo  = m.match(/第\s*(\d+)\s*\/\s*(\d+)\s*个视频/);
+    const chCount  = m.match(/共\s*(\d+)\s*个视频/);
+    if      (m.includes('博主主页') || m.includes('解析博主')) {
+      label = this.t('channel_parsing');
+    } else if (chVideo) {
+      // 「正在转录第 i/n 个视频：标题」→ i18n 计数 + 保留标题
+      const titlePart = (msg.split('：')[1] || '').trim();
+      label = this.t('channel_transcribing')(Number(chVideo[1]), Number(chVideo[2]))
+            + (titlePart ? ` · ${titlePart}` : '');
+    } else if (chCount && (m.includes('博主') || m.includes('creator'))) {
+      label = this.t('channel_videos')(Number(chCount[1]));
+    } else if (m.includes('合集') || m.includes('collection')) {
+      label = this.t('generating_summary');
+    }
     // ── Subtitle path ──────────────────────────────────────────
-    if      (m.includes('获取成功') || m.includes('subtitle found'))        label = this.t('subtitle_found');
+    else if      (m.includes('获取成功') || m.includes('subtitle found'))        label = this.t('subtitle_found');
     else if (m.includes('未找到字幕') || m.includes('no subtitle'))         label = this.t('no_subtitle');
     else if (m.includes('检测') && (m.includes('字幕') || m.includes('subtitle'))) label = this.t('detecting_subtitles');
     // ── Task start ─────────────────────────────────────────────
@@ -751,7 +717,17 @@ class VideoTranscriber {
     // No speech in the source: there is no summary or translation to show, and
     // the backend deliberately skipped the LLM so nothing gets fabricated.
     const noSpeech = Boolean(task.no_speech);
+    // 博主模式：所有视频都无语音时用合集文案（_switchLang 切语言时保持）
+    this._channelNoSpeech = noSpeech && Boolean(task.channel);
     this.noSpeechBanner.classList.toggle('show', noSpeech);
+    if (noSpeech) {
+      const bannerSpan = this.noSpeechBanner.querySelector('span');
+      if (bannerSpan) {
+        bannerSpan.textContent = this.t(
+          this._channelNoSpeech ? 'channel_no_speech_notice' : 'no_speech_notice'
+        );
+      }
+    }
     this.summaryTabItem.style.display = noSpeech ? 'none' : 'flex';
 
     const d = this._normLangTab(task.detected_language);

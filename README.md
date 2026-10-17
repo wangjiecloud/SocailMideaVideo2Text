@@ -4,7 +4,7 @@
 
 English | [中文](README_ZH.md)
 
-An AI-powered tool to transcribe, summarize, and archive videos and podcasts — paste a URL from YouTube, TikTok, Bilibili, Apple Podcasts, SoundCloud, and 30+ platforms, **or upload a local file** (audio, video, or plain text).
+An AI-powered tool to transcribe, summarize, and archive videos and podcasts — paste a URL from YouTube, TikTok, Bilibili, Apple Podcasts, SoundCloud, and 30+ platforms, **or upload a local file** (audio, video, or plain text), **or paste a Douyin creator page** to transcribe all of their videos at once.
 
 ![Interface](en_video.png)
 
@@ -20,8 +20,9 @@ An AI-powered tool to transcribe, summarize, and archive videos and podcasts —
 - 🤖 **AI Text Optimization**: Automatic typo correction, sentence completion, and intelligent paragraphing
 - 🌍 **Multi-Language Summaries**: Generate intelligent summaries in 11 languages
 - ⚙️ **Conditional Translation**: Auto-translates the transcript when the summary language differs from the source language
-- 🔧 **Bring Your Own Model**: Configure any OpenAI-compatible API endpoint (OpenAI, OpenRouter, local LLM, etc.) directly in the UI — enter your API Base URL and API Key, then click **Fetch** to auto-discover available models
-- 📡 **Live Progress**: Server-sent events stream real-time status, with a badge showing whether the job took the subtitle or Whisper path
+- 🔀 **litellm Model Selection**: The model dropdown in the UI reads from `~/.config/opencode/ms.json` — the same file lunwenAgent uses at runtime, so the list stays in sync (bundled `m.json` as fallback) — and connects through the litellm gateway using credentials from `llm-config.json` — pick a model and go, no manual API key entry
+- 📺 **Douyin Creator Batch Transcription**: Paste a creator page (`douyin.com/user/...`) and every video gets transcribed into one collection, each section headed by the video's publish time, with a single overall summary. Per-video failures are skipped, not fatal
+- 📡 **Live Progress**: Server-sent events stream real-time status, with a badge showing whether the job took the subtitle, Whisper, or Douyin-creator path
 - 📱 **Mobile-Friendly**: Responsive layout, dark UI
 
 ## 📑 Contents
@@ -45,7 +46,9 @@ An AI-powered tool to transcribe, summarize, and archive videos and podcasts —
 
 - Python 3.8+
 - FFmpeg (required for yt-dlp audio extraction, merging downloaded video, and normalizing uploaded media)
-- An API key from any OpenAI-compatible provider (OpenAI, OpenRouter, etc.) — configurable directly in the UI, no server-side env var needed
+- LLM access, one of:
+  - **litellm gateway (default)** — the model list comes from `~/.config/opencode/ms.json` (the same file lunwenAgent reads at runtime; bundled `m.json` as fallback), credentials from `llm-config.json` (`~/.config/opencode/` first, then the project root). Nothing to type, just pick a model in the UI
+  - Any OpenAI-compatible API key (OpenAI, OpenRouter, etc.) — via `OPENAI_API_KEY` or CLI flags; transcription-only `--no-llm` runs need neither
 
 ### Installation
 
@@ -109,9 +112,10 @@ sudo yum install ffmpeg                          # CentOS/RHEL
 **3. Configure environment variables** *(optional)*
 
 ```bash
-# Only if you prefer server-side defaults — otherwise configure in the UI
+# LLM defaults to the litellm gateway (ms.json + llm-config.json) — nothing to set.
+# Only if you prefer a different OpenAI-compatible provider:
 export OPENAI_API_KEY="your_api_key_here"
-export OPENAI_BASE_URL="https://openrouter.ai/api/v1"   # any OpenAI-compatible endpoint
+export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
 ```
 
 </details>
@@ -146,9 +150,10 @@ python3 start.py --prod
 
 ## 📖 Usage Guide
 
-**1. Choose your input — URL or file**
+**1. Choose your input — URL, file, or a Douyin creator page**
 
 - **Video / podcast URL**: paste a link from YouTube, Bilibili, or any supported platform
+- **Douyin creator page**: paste `https://www.douyin.com/user/<sec_uid>` and all of that creator's videos are transcribed into one collection, sections separated by each video's publish time, with a single overall summary (no per-video LLM passes — a creator can have hundreds of videos). Set `DOUYIN_COOKIE` for higher success rates; some corporate networks block `douyin.com` entirely
 - **Local file**: drag a file onto the dashed upload area, or click to browse. The same **Transcribe** button starts the job. Uploads use the same API route as URLs (`POST /api/process-video` with a multipart `file`), which helps when a reverse proxy only allows that path
 
 **2. Pick your options**
@@ -156,11 +161,10 @@ python3 start.py --prod
 - **Summary Language** — the output language for the summary
 - **Keep original video** — on by default. Downloads the source video (≤720p) so you can preview and save it with the results. Turn it off for text-only jobs to save bandwidth and disk
 
-**3. (Optional) Configure your AI model** — click **AI Settings** to expand
+**3. (Optional) Pick an AI model**
 
-- Enter your **API Base URL** (e.g. `https://openrouter.ai/api/v1`) and **API Key**
-- Click **Fetch** to auto-load available models, then select one — or leave blank for the server default
-- Credentials are stored in your browser's `localStorage`, never sent anywhere but your chosen provider
+- The **Model** dropdown lists the chat models from `ms.json` (`~/.config/opencode/`, same source as lunwenAgent; bundled `m.json` as fallback) and connects through the litellm gateway (`llm-config.json` holds the credentials, so you never type an API key). The first entry is the server default
+- Advanced: CLI/agent users can still pass `--api-key` / `--base-url` for any OpenAI-compatible endpoint
 
 **4. Start processing** — click **Transcribe**. For **URL** jobs a badge shows the active mode:
 
@@ -168,6 +172,7 @@ python3 start.py --prod
 |-------|---------|
 | **⚡ Subtitle** (green) | Native subtitles found — transcript extracted in seconds |
 | **🎙 Whisper** (cyan) | No subtitles available — audio downloaded and transcribed |
+| **🎬 Creator** (violet) | Douyin creator page — all videos transcribed into one collection |
 
 For **local uploads**, media is normalized with FFmpeg then transcribed with Whisper. Plain **`.txt`** files skip download and Whisper entirely, going straight into the text pipeline.
 
@@ -188,6 +193,7 @@ same pipeline with no server and no browser.
 
 ```bash
 venv/bin/python transcribe.py "https://www.youtube.com/watch?v=VIDEO_ID" --json
+venv/bin/python transcribe.py "https://www.douyin.com/user/<sec_uid>" --json   # all of a creator's videos
 venv/bin/python transcribe.py talk.mp4 -l zh --no-video
 venv/bin/python transcribe.py notes.txt --no-llm          # no API key needed
 ```
@@ -201,13 +207,21 @@ Exit codes: `0` success, `2` bad input, `1` download/transcode failure.
 | `--no-llm` | Transcript only — skips optimize/translate/summarize, needs no API key |
 | `--no-video` | Don't keep the original video |
 | `--whisper-model` | `tiny` … `large`, default `base` |
+| `--video-max-height` | Max resolution for the original video download, default `720` |
+| `--model` | Model ID or display name from the model list (e.g. `claude-sonnet-5`); default is the first entry |
+| `--api-key` / `--base-url` | Any OpenAI-compatible endpoint; defaults to litellm (`llm-config.json` + `ms.json`/`m.json`) |
 | `-o, --output-dir` | Where to write the Markdown, default `./temp` |
 | `--json` / `-q` | Machine-readable output / silence progress |
 
 #### AI provider settings for agents
 
-For CLI/agent use, configure the OpenAI-compatible provider with environment
-variables:
+By default the CLI connects through the **litellm gateway**: the model list
+comes from `~/.config/opencode/ms.json` (the same file lunwenAgent reads at
+runtime; bundled `m.json` as fallback — first entry = default), credentials from
+`llm-config.json` (`~/.config/opencode/` first, then the project root). Nothing
+to configure.
+
+To use another OpenAI-compatible provider instead, set environment variables:
 
 ```bash
 export OPENAI_API_KEY="your_api_key_here"
@@ -215,8 +229,9 @@ export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
 export OPENAI_TRANSLATION_MODEL="gpt-4o"  # optional
 ```
 
-For one-off CLI runs you can also pass `--api-key`, `--base-url`, and `--model`,
-but environment variables are safer because API keys do not end up in shell history.
+For one-off CLI runs you can also pass `--api-key`, `--base-url`, and
+`--model`, but environment variables are safer because API keys do not end up
+in shell history.
 
 ### Codex App plugin
 
@@ -320,14 +335,15 @@ All endpoints are served from the same origin as the UI.
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| `POST` | `/api/process-video` | Start a job — accepts either a URL or a multipart `file` |
+| `POST` | `/api/process-video` | Start a job — accepts a URL (video/podcast **or Douyin creator page**) or a multipart `file` |
 | `POST` | `/api/process-upload` | Upload-only alias, identical behavior |
 | `GET` | `/api/task-status/{task_id}` | Poll a job's current state |
 | `GET` | `/api/task-stream/{task_id}` | SSE stream of live progress updates |
 | `GET` | `/api/download/{filename}` | Download a result as an attachment (`.md` or media). Optional `?name=` sets a friendly filename |
 | `GET` | `/api/media/{filename}` | Stream media inline for the player — supports HTTP Range, so seeking works |
 | `DELETE` | `/api/task/{task_id}` | Cancel a running job and drop its record |
-| `POST` | `/api/models` | Proxy: list models from any OpenAI-compatible provider |
+| `GET` | `/api/litellm/models` | Model list (from `ms.json`/`m.json`) for the UI dropdown (`[{id, name, base_url}]` + `default`) |
+| `POST` | `/api/models` | Legacy proxy: list models from any OpenAI-compatible provider |
 | `GET` | `/api/tasks/active` | Active job counters (debugging) |
 
 <details>
@@ -335,13 +351,13 @@ All endpoints are served from the same origin as the UI.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `url` | string | `""` | Video/podcast URL. Omit when uploading a file |
+| `url` | string | `""` | Video/podcast URL or Douyin creator page. Omit when uploading a file |
 | `file` | file | – | Multipart upload. Takes precedence over `url` |
 | `summary_language` | string | `zh` | Target summary language code |
 | `download_video` | string | `1` | `0`/`false`/`no`/`off` disables the original video download |
-| `api_key` | string | `""` | Per-request API key; falls back to `OPENAI_API_KEY` |
-| `model_base_url` | string | `""` | Per-request OpenAI-compatible base URL |
-| `model_id` | string | `""` | Model to use; blank means server default |
+| `model_id` | string | `""` | Model ID or display name from the model list; blank means the first entry |
+| `api_key` | string | `""` | Explicit credentials for an OpenAI-compatible endpoint; blank means litellm (`llm-config.json`) |
+| `model_base_url` | string | `""` | Base URL when `api_key` is given; ignored in litellm mode |
 
 ```bash
 # Transcribe a URL, skipping the video download
@@ -381,9 +397,12 @@ AI-Video-Transcriber/
 │   ├── main.py             # FastAPI app, routes, task orchestration
 │   ├── pipeline.py         # Pure helpers shared by web/CLI/MCP (incl. no-speech guard)
 │   ├── video_processor.py  # yt-dlp: subtitles, audio, original video
+│   ├── douyin.py           # Douyin creator-page parsing (SSR data + pagination API)
+│   ├── channel_processor.py# Creator batch mode: per-video download+transcribe → one collection
 │   ├── transcriber.py      # Faster-Whisper transcription
 │   ├── summarizer.py       # Transcript optimization + summary
 │   ├── translator.py       # Conditional translation
+│   ├── model_registry.py   # litellm model list (ms.json/m.json) + credentials (llm-config.json)
 │   └── llm_sanitize.py     # Post-process LLM output (strip boilerplate)
 ├── static/
 │   ├── index.html          # UI markup + styles
@@ -394,6 +413,8 @@ AI-Video-Transcriber/
 ├── .env.example
 ├── requirements.txt
 ├── install.sh
+├── m.json                  # Fallback litellm model list (~/.config/opencode/ms.json is preferred)
+├── llm-config.json         # litellm gateway credentials (gitignored)
 ├── start.py                # Startup script (--prod disables hot reload)
 ├── transcribe.py           # Headless CLI (agents, scripts, cron)
 ├── mcp_server.py           # MCP server exposing the transcribe_video tool
@@ -415,9 +436,10 @@ All are optional — the app runs with defaults and accepts AI credentials from 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OPENAI_API_KEY` | API key (server-side default) | – |
+| `OPENAI_API_KEY` | API key for an OpenAI-compatible provider (skipped when litellm credentials exist) | – |
 | `OPENAI_BASE_URL` | OpenAI-compatible endpoint | provider default |
 | `OPENAI_TRANSLATION_MODEL` | Model used for translation | `gpt-4o` |
+| `DOUYIN_COOKIE` | Browser Cookie string for Douyin — raises creator-page parsing success rates | – |
 | `WHISPER_MODEL_SIZE` | Whisper model size | `base` |
 | `UPLOAD_MAX_MB` | Max upload size per file (MB) | `200` |
 | `VIDEO_MAX_HEIGHT` | Max height for the original video download | `720` |
@@ -486,7 +508,7 @@ Allowed extensions: `.txt`, `.mp3`, `.mp4`, `.m4a`, `.wav`, `.webm`, `.mkv`, `.o
 <details>
 <summary><b>The AI features are unavailable — what now?</b></summary>
 
-They need an API key from any OpenAI-compatible provider. Enter it in the **AI Settings** panel in the UI (no restart needed), or set `OPENAI_API_KEY` for a server-side default. Without a key, transcription still works — Whisper runs locally — but optimization, translation, and summaries fall back to basic formatting.
+They need LLM access. By default the app connects through the litellm gateway — check that `llm-config.json` is readable (`~/.config/opencode/` or the project root) and pick a model from the dropdown. Alternatively set `OPENAI_API_KEY` (or pass `--api-key` to the CLI) for any OpenAI-compatible provider. Without credentials, transcription still works — Whisper runs locally — but optimization, translation, and summaries fall back to basic formatting.
 
 </details>
 
@@ -497,7 +519,7 @@ Usually environment configuration rather than a code bug. Check that you:
 
 - Activated the virtualenv: `source venv/bin/activate`
 - Installed deps inside it: `pip install -r requirements.txt`
-- Configured an API key in **AI Settings**, or set `OPENAI_API_KEY`
+- Have litellm credentials (`llm-config.json`) or set `OPENAI_API_KEY`
 - Installed FFmpeg: `brew install ffmpeg` / `sudo apt install ffmpeg`
 - Freed port 8000, or changed `PORT`
 

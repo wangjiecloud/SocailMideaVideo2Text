@@ -11,28 +11,52 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+
+def _cookie_header_to_netscape(cookie: str, domain: str) -> str:
+    """把浏览器复制的原始 Cookie 字符串转成 yt-dlp 可读的 Netscape cookiefile 内容。"""
+    lines = ["# Netscape HTTP Cookie File"]
+    for pair in cookie.split(";"):
+        name, _, value = pair.strip().partition("=")
+        if not name:
+            continue
+        # domain  include_subdomains  path  secure  expires  name  value
+        lines.append(f"{domain}\tTRUE\t/\tTRUE\t0\t{name}\t{value}")
+    return "\n".join(lines) + "\n"
+
+
 class VideoProcessor:
     """视频处理器，使用yt-dlp下载和转换视频"""
-    
+
     def __init__(self):
         self.ydl_opts = {
-            'format': 'bestaudio/best',  # 优先下载最佳音频源
-            'outtmpl': '%(title)s.%(ext)s',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                # 直接在提取阶段转换为单声道 16k（空间小且稳定）
-                'preferredcodec': 'm4a',
-                'preferredquality': '192'
-            }],
+            "format": "bestaudio/best",  # 优先下载最佳音频源
+            "outtmpl": "%(title)s.%(ext)s",
+            "postprocessors": [
+                {
+                    "key": "FFmpegExtractAudio",
+                    # 直接在提取阶段转换为单声道 16k（空间小且稳定）
+                    "preferredcodec": "m4a",
+                    "preferredquality": "192",
+                }
+            ],
             # 全局FFmpeg参数：单声道 + 16k 采样率 + faststart
-            'postprocessor_args': ['-ac', '1', '-ar', '16000', '-movflags', '+faststart'],
-            'prefer_ffmpeg': True,
-            'quiet': True,
-            'no_warnings': True,
-            'noplaylist': True,  # 强制只下载单个视频，不下载播放列表
+            "postprocessor_args": [
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-movflags",
+                "+faststart",
+            ],
+            "prefer_ffmpeg": True,
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,  # 强制只下载单个视频，不下载播放列表
         }
 
-    async def normalize_local_media_to_m4a(self, input_path: Path, output_dir: Path) -> str:
+    async def normalize_local_media_to_m4a(
+        self, input_path: Path, output_dir: Path
+    ) -> str:
         """
         将本地上传的音视频转为单声道 16kHz AAC m4a，供 Faster-Whisper 使用（与 yt-dlp 后处理参数对齐）。
         """
@@ -41,9 +65,22 @@ class VideoProcessor:
         out_path = output_dir / f"upload_norm_{unique_id}.m4a"
 
         cmd = [
-            "ffmpeg", "-y", "-nostdin", "-i", str(input_path.resolve()),
-            "-vn", "-ac", "1", "-ar", "16000",
-            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+            "ffmpeg",
+            "-y",
+            "-nostdin",
+            "-i",
+            str(input_path.resolve()),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
             str(out_path.resolve()),
         ]
 
@@ -57,7 +94,7 @@ class VideoProcessor:
 
         await asyncio.to_thread(_run)
         return str(out_path)
-    
+
     async def download_video(
         self,
         url: str,
@@ -85,25 +122,25 @@ class VideoProcessor:
                 f"best[height<=?{max_height}]/best"
             )
             ydl_opts = {
-                'format': fmt,
-                'merge_output_format': 'mp4',
-                'outtmpl': str(output_dir / f"{stem}.%(ext)s"),
+                "format": fmt,
+                "merge_output_format": "mp4",
+                "outtmpl": str(output_dir / f"{stem}.%(ext)s"),
                 # faststart 让 moov 前置，浏览器无需下载完整文件即可起播
-                'postprocessor_args': ['-movflags', '+faststart'],
-                'prefer_ffmpeg': True,
-                'quiet': True,
-                'no_warnings': True,
-                'noplaylist': True,
+                "postprocessor_args": ["-movflags", "+faststart"],
+                "prefer_ffmpeg": True,
+                "quiet": True,
+                "no_warnings": True,
+                "noplaylist": True,
             }
 
             logger.info(f"开始下载原视频（≤{max_height}p）: {url}")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = await asyncio.to_thread(ydl.extract_info, url, True)
 
-            video_title = (info or {}).get('title') or 'unknown'
+            video_title = (info or {}).get("title") or "unknown"
 
             # 合并后的容器不一定是 mp4（单一流或无法重混流时会保留原容器）
-            for ext in ('mp4', 'mkv', 'webm', 'mov', 'flv'):
+            for ext in ("mp4", "mkv", "webm", "mov", "flv"):
                 candidate = output_dir / f"{stem}.{ext}"
                 if candidate.exists():
                     size_mb = candidate.stat().st_size / (1024 * 1024)
@@ -117,7 +154,56 @@ class VideoProcessor:
             logger.warning(f"原视频下载失败（结果页将不展示视频）: {e}")
             return None, None
 
-    async def fetch_subtitles(self, url: str, output_dir: Path) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    async def download_video_audio(
+        self,
+        url: str,
+        output_dir: Path,
+        stem: str,
+        cookie: Optional[str] = None,
+        cookie_domain: str = ".douyin.com",
+    ) -> str:
+        """下载单个视频并抽取为单声道 16k m4a 音频，返回文件路径。
+
+        供博主批量转录逐视频使用；与 download_and_convert 的区别：
+        - 输出文件名由调用方给定（stem，不含扩展名），便于定位与批量清理；
+        - 支持把浏览器 Cookie 字符串转成 Netscape cookiefile 传给 yt-dlp
+          （抖音等需要登录态的平台）；
+        - 失败直接抛异常，由调用方决定重试或跳过该视频。
+        """
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        ydl_opts = self.ydl_opts.copy()
+        ydl_opts["outtmpl"] = str(output_dir / f"{stem}.%(ext)s")
+
+        cookie_file = None
+        if cookie:
+            cookie_file = output_dir / f"{stem}.cookies.txt"
+            cookie_file.write_text(
+                _cookie_header_to_netscape(cookie, cookie_domain), encoding="utf-8"
+            )
+            ydl_opts["cookiefile"] = str(cookie_file)
+
+        try:
+            logger.info(f"下载单视频音频: {url}")
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                await asyncio.to_thread(ydl.extract_info, url, True)
+        finally:
+            if cookie_file is not None:
+                try:
+                    cookie_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        # 抽取后处理器的产物是 m4a；找不到时按常见音频容器兜底
+        for ext in ("m4a", "mp3", "wav", "webm", "mp4", "ogg", "flac", "opus"):
+            candidate = output_dir / f"{stem}.{ext}"
+            if candidate.exists() and candidate.stat().st_size > 0:
+                return str(candidate)
+        raise Exception(f"音频下载完成但未找到输出文件: {stem}.*")
+
+    async def fetch_subtitles(
+        self, url: str, output_dir: Path
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """
         先尝试从平台获取字幕文本，比下载音频快得多。
 
@@ -154,7 +240,18 @@ class VideoProcessor:
             candidate_langs = manual_langs if prefer_manual else auto_langs
 
             # 按优先级选语言：英语 > 简体中文 > 繁体中文 > 其他（取第一个）
-            _priority = ["en", "en-orig", "zh-Hans", "zh-Hant", "zh", "ja", "ko", "fr", "de", "es"]
+            _priority = [
+                "en",
+                "en-orig",
+                "zh-Hans",
+                "zh-Hant",
+                "zh",
+                "ja",
+                "ko",
+                "fr",
+                "de",
+                "es",
+            ]
             prefer_lang = next(
                 (lang for lang in _priority if lang in candidate_langs),
                 candidate_langs[0],
@@ -252,7 +349,7 @@ class VideoProcessor:
                 continue
 
             timing_line = lines[timing_idx]
-            text_lines = lines[timing_idx + 1:]
+            text_lines = lines[timing_idx + 1 :]
 
             match = re.match(
                 r"(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?)\s*-->\s*"
@@ -270,12 +367,12 @@ class VideoProcessor:
             text = re.sub(r"<[^>]+>", "", raw_text)
             text = (
                 text.replace("&amp;", "&")
-                    .replace("&lt;", "<")
-                    .replace("&gt;", ">")
-                    .replace("&nbsp;", " ")
-                    .replace("&#39;", "'")
-                    .replace("&quot;", '"')
-                    .strip()
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&nbsp;", " ")
+                .replace("&#39;", "'")
+                .replace("&quot;", '"')
+                .strip()
             )
             # 合并行内多余空白
             text = re.sub(r"\s+", " ", text).strip()
@@ -330,7 +427,7 @@ class VideoProcessor:
                 continue
 
             timing_line = lines[timing_idx]
-            text_lines = lines[timing_idx + 1:]
+            text_lines = lines[timing_idx + 1 :]
 
             match = re.match(
                 r"(\d{1,2}:\d{2}:\d{2}[.,]\d+)\s*-->\s*(\d{1,2}:\d{2}:\d{2}[.,]\d+)",
@@ -398,18 +495,19 @@ class VideoProcessor:
         try:
             # 创建输出目录
             output_dir.mkdir(exist_ok=True)
-            
+
             # 生成唯一的文件名
             unique_id = str(uuid.uuid4())[:8]
             output_template = str(output_dir / f"audio_{unique_id}.%(ext)s")
-            
+
             # 更新yt-dlp选项
             ydl_opts = self.ydl_opts.copy()
-            ydl_opts['outtmpl'] = output_template
-            
+            ydl_opts["outtmpl"] = output_template
+
             logger.info(f"开始下载视频: {url}")
-            
+
             import asyncio
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 if prefetched_title:
                     # 标题和时长已在 fetch_subtitles 中获取，直接下载，跳过重复探测
@@ -419,36 +517,41 @@ class VideoProcessor:
                 else:
                     # 获取视频信息（放到线程池避免阻塞事件循环）
                     info = await asyncio.to_thread(ydl.extract_info, url, False)
-                    video_title = info.get('title', 'unknown')
-                    expected_duration = info.get('duration') or 0
+                    video_title = info.get("title", "unknown")
+                    expected_duration = info.get("duration") or 0
                     logger.info(f"视频标题: {video_title}")
-                
+
                 # 下载视频（放到线程池避免阻塞事件循环）
                 await asyncio.to_thread(ydl.download, [url])
-            
+
             # 查找生成的m4a文件
             audio_file = str(output_dir / f"audio_{unique_id}.m4a")
-            
+
             if not os.path.exists(audio_file):
                 # 如果m4a文件不存在，查找其他音频格式
-                for ext in ['webm', 'mp4', 'mp3', 'wav']:
+                for ext in ["webm", "mp4", "mp3", "wav"]:
                     potential_file = str(output_dir / f"audio_{unique_id}.{ext}")
                     if os.path.exists(potential_file):
                         audio_file = potential_file
                         break
                 else:
                     raise Exception("未找到下载的音频文件")
-            
+
             # 校验时长，如果和源视频差异较大，尝试一次ffmpeg规范化重封装
             try:
                 import subprocess, shlex
+
                 probe_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {shlex.quote(audio_file)}"
                 out = subprocess.check_output(probe_cmd, shell=True).decode().strip()
                 actual_duration = float(out) if out else 0.0
             except Exception as _:
                 actual_duration = 0.0
-            
-            if expected_duration and actual_duration and abs(actual_duration - expected_duration) / expected_duration > 0.1:
+
+            if (
+                expected_duration
+                and actual_duration
+                and abs(actual_duration - expected_duration) / expected_duration > 0.1
+            ):
                 logger.warning(
                     f"音频时长异常，期望{expected_duration}s，实际{actual_duration}s，尝试重封装修复…"
                 )
@@ -459,39 +562,49 @@ class VideoProcessor:
                     # 用修复后的文件替换
                     audio_file = fixed_path
                     # 重新探测
-                    out2 = subprocess.check_output(probe_cmd.replace(shlex.quote(audio_file.rsplit('.',1)[0]+'.m4a'), shlex.quote(audio_file)), shell=True).decode().strip()
+                    out2 = (
+                        subprocess.check_output(
+                            probe_cmd.replace(
+                                shlex.quote(audio_file.rsplit(".", 1)[0] + ".m4a"),
+                                shlex.quote(audio_file),
+                            ),
+                            shell=True,
+                        )
+                        .decode()
+                        .strip()
+                    )
                     actual_duration2 = float(out2) if out2 else 0.0
                     logger.info(f"重封装完成，新时长≈{actual_duration2:.2f}s")
                 except Exception as e:
                     logger.error(f"重封装失败：{e}")
-            
+
             logger.info(f"音频文件已保存: {audio_file}")
             return audio_file, video_title
-            
+
         except Exception as e:
             logger.error(f"下载视频失败: {str(e)}")
             raise Exception(f"下载视频失败: {str(e)}")
-    
+
     def get_video_info(self, url: str) -> dict:
         """
         获取视频信息
-        
+
         Args:
             url: 视频链接
-            
+
         Returns:
             视频信息字典
         """
         try:
-            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+            with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
                 info = ydl.extract_info(url, download=False)
                 return {
-                    'title': info.get('title', ''),
-                    'duration': info.get('duration', 0),
-                    'uploader': info.get('uploader', ''),
-                    'upload_date': info.get('upload_date', ''),
-                    'description': info.get('description', ''),
-                    'view_count': info.get('view_count', 0),
+                    "title": info.get("title", ""),
+                    "duration": info.get("duration", 0),
+                    "uploader": info.get("uploader", ""),
+                    "upload_date": info.get("upload_date", ""),
+                    "description": info.get("description", ""),
+                    "view_count": info.get("view_count", 0),
                 }
         except Exception as e:
             logger.error(f"获取视频信息失败: {str(e)}")

@@ -7,5 +7,8 @@ openai>=1.51.0
 pydantic>=2.7.0
 aiofiles>=24.1.0
 
+# 抖音博主主页解析需要浏览器 TLS 指纹（curl_cffi），普通 requests 会被直接 reset
+curl_cffi>=0.7.0
+
 # Only needed for mcp_server.py (agent/tool integration)
 mcp>=2.0.0

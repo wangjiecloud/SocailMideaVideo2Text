@@ -4,7 +4,7 @@
 
 中文 | [English](README.md)
 
-一款开源的 AI 视频/播客转录、摘要与归档工具：支持 YouTube、Bilibili、抖音、Apple Podcasts、SoundCloud 等 30+ 平台链接，**也支持本地上传**（音视频或纯文本）。
+一款开源的 AI 视频/播客转录、摘要与归档工具：支持 YouTube、Bilibili、抖音、Apple Podcasts、SoundCloud 等 30+ 平台链接，**也支持本地上传**（音视频或纯文本），**还支持粘贴抖音博主主页链接**，一次转录该博主的全部视频。
 
 ![Interface](cn_video.png)
 
@@ -20,8 +20,9 @@
 - 🤖 **AI 文本优化**：自动错别字修正、句子完整化和智能分段
 - 🌍 **多语言摘要**：支持 11 种语言的智能摘要生成
 - ⚙️ **条件式翻译**：当所选摘要语言与转录语言不一致时，自动生成翻译
-- 🔧 **自定义 AI 模型**：在页面中直接配置任意 OpenAI 兼容接口（OpenAI、OpenRouter、本地 LLM 等）—— 输入 API 地址和 Key，点击 **Fetch** 自动获取可用模型并选择
-- 📡 **实时进度**：通过 SSE 推送实时状态，并用徽章标明本次走的是字幕模式还是 Whisper 模式
+- 🔀 **litellm 模型选择**：页面中的模型下拉列表读取自 `~/.config/opencode/ms.json`（与 lunwenAgent 运行时同源，列表自动保持同步，项目内 `m.json` 兜底），凭据来自 `llm-config.json`，经 litellm 网关连接 —— 选个模型就能用，无需手动填写 API Key
+- 📺 **抖音博主批量转录**：粘贴博主主页链接（`douyin.com/user/...`），全部视频转录为一份合集文稿，每节以视频发布时间开头，并生成一次整体摘要。单个视频失败会跳过，不会中断整批任务
+- 📡 **实时进度**：通过 SSE 推送实时状态，并用徽章标明本次走的是字幕、Whisper 还是抖音博主路径
 - 📱 **移动适配**：响应式布局，深色界面
 
 ## 📑 目录
@@ -45,7 +46,10 @@
 
 - Python 3.8+
 - FFmpeg（链接音频提取、原视频合流、本地上传转码均需）
-- 任意 OpenAI 兼容服务商的 API Key（OpenAI、OpenRouter 等）—— 可直接在页面 UI 中配置，无需服务器环境变量
+- LLM 访问能力，三选一：
+  - **litellm 网关（默认）**—— 模型列表来自 `~/.config/opencode/ms.json`（与 lunwenAgent 运行时同源；项目内 `m.json` 兜底），凭据从 `llm-config.json` 读取（优先 `~/.config/opencode/`，其次项目根目录）。无需任何输入，在页面选个模型即可
+  - 任意 OpenAI 兼容服务商的 API Key（OpenAI、OpenRouter 等）—— 通过 `OPENAI_API_KEY` 环境变量或 CLI 参数指定
+  - 都不需要：仅转录的 `--no-llm` 模式本地即可运行
 
 ### 安装方法
 
@@ -109,7 +113,8 @@ sudo yum install ffmpeg                          # CentOS/RHEL
 **3. 配置环境变量**（可选）
 
 ```bash
-# 如需服务端默认值可设置，否则直接在页面 AI Settings 面板中配置
+# LLM 默认走 litellm 网关（ms.json + llm-config.json），无需配置。
+# 如需改用其他 OpenAI 兼容服务商：
 export OPENAI_API_KEY="your_api_key_here"
 export OPENAI_BASE_URL="https://openrouter.ai/api/v1"   # 任意兼容端点
 ```
@@ -146,9 +151,10 @@ python3 start.py --prod
 
 ## 📖 使用指南
 
-**1. 选择输入方式：链接或本地文件**
+**1. 选择输入方式：链接、本地文件或抖音博主主页**
 
 - **视频/播客链接**：在输入框粘贴 YouTube、Bilibili 等支持的平台链接
+- **抖音博主主页**：粘贴 `https://www.douyin.com/user/<sec_uid>`，该博主的全部视频会被转录为一份合集文稿，按各视频发布时间分节，并生成一次整体摘要（不逐视频跑 LLM —— 博主可能有几百个视频，成本不现实）。设置 `DOUYIN_COOKIE` 可提高解析成功率；部分公司网络会完全屏蔽 `douyin.com`
 - **本地上传**：将文件拖到虚线框内，或点击选择文件。点击同一个 **Transcribe** 按钮开始处理。上传与链接共用 `POST /api/process-video`（multipart 带 `file` 字段），便于反向代理只放行该路径时仍可使用上传
 
 **2. 选择处理选项**
@@ -156,11 +162,10 @@ python3 start.py --prod
 - **摘要语言** —— 摘要输出使用的语言
 - **保留原视频** —— 默认开启。会下载源视频（≤720p），可在结果区预览和保存。只要文本时关掉它可以节省带宽和磁盘
 
-**3.（可选）配置 AI 模型** —— 点击 **AI Settings** 展开面板
+**3.（可选）选择 AI 模型**
 
-- 填写 **API Base URL**（如 `https://openrouter.ai/api/v1`）和 **API Key**
-- 点击 **Fetch** 自动拉取该服务商的可用模型列表，然后选择；留空则使用服务器默认模型
-- 凭据保存在浏览器 `localStorage` 中，只会发往你自己指定的服务商
+- **模型**下拉列表展示 `ms.json`（`~/.config/opencode/`，与 lunwenAgent 同源；项目内 `m.json` 兜底）中的 chat 模型，经 litellm 网关连接（凭据在 `llm-config.json` 中，全程无需输入 API Key），第一个条目即服务器默认模型
+- 进阶：CLI/agent 用户仍可传 `--api-key` / `--base-url` 接入任意 OpenAI 兼容端点
 
 **4. 开始处理** —— 点击 **Transcribe**。**链接任务**会显示当前模式徽章：
 
@@ -168,6 +173,7 @@ python3 start.py --prod
 |------|------|
 | **⚡ Subtitle**（绿色） | 检测到原生字幕，秒级提取完成 |
 | **🎙 Whisper**（青色） | 无字幕，下载音频后转录 |
+| **🎬 Creator**（紫色） | 抖音博主主页，全部视频转录为一份合集 |
 
 **本地上传**时：音视频先经 FFmpeg 转码再由 Whisper 转录；纯 **`.txt`** 文件不下载、不跑 Whisper，直接进入文本优化与摘要流程。
 
@@ -188,6 +194,7 @@ python3 start.py --prod
 
 ```bash
 venv/bin/python transcribe.py "https://www.youtube.com/watch?v=VIDEO_ID" --json
+venv/bin/python transcribe.py "https://www.douyin.com/user/<sec_uid>" --json   # 博主全部视频
 venv/bin/python transcribe.py talk.mp4 -l zh --no-video
 venv/bin/python transcribe.py notes.txt --no-llm          # 无需 API Key
 ```
@@ -201,12 +208,20 @@ venv/bin/python transcribe.py notes.txt --no-llm          # 无需 API Key
 | `--no-llm` | 只输出转录文本，跳过优化/翻译/摘要，无需 API Key |
 | `--no-video` | 不保留原视频 |
 | `--whisper-model` | `tiny` … `large`，默认 `base` |
+| `--video-max-height` | 原视频下载清晰度上限，默认 `720` |
+| `--model` | 模型列表中的模型 ID 或显示名（如 `claude-sonnet-5`），默认取第一个条目 |
+| `--api-key` / `--base-url` | 任意 OpenAI 兼容端点；默认走 litellm（`llm-config.json` + `ms.json`/`m.json`） |
 | `-o, --output-dir` | Markdown 输出目录，默认 `./temp` |
 | `--json` / `-q` | 机器可读输出 / 静默进度 |
 
 #### Agent 的 AI 服务商配置
 
-CLI/agent 场景推荐用环境变量配置 OpenAI 兼容服务商：
+CLI 默认经 **litellm 网关** 连接：模型列表来自 `~/.config/opencode/ms.json`
+（与 lunwenAgent 运行时同源；项目内 `m.json` 兜底，第一个条目为默认），
+凭据来自 `llm-config.json`（优先 `~/.config/opencode/`，其次项目根目录），
+无需任何配置。
+
+如需改用其他 OpenAI 兼容服务商，用环境变量配置：
 
 ```bash
 export OPENAI_API_KEY="your_api_key_here"
@@ -312,14 +327,15 @@ Claude Desktop 则把同样的 command 和 args 加到 Claude Desktop 的 MCP �
 
 | 方法 | 路径 | 用途 |
 |------|------|------|
-| `POST` | `/api/process-video` | 创建任务 —— 接受链接或 multipart `file` |
+| `POST` | `/api/process-video` | 创建任务 —— 接受链接（视频/播客**或抖音博主主页**）或 multipart `file` |
 | `POST` | `/api/process-upload` | 仅上传的等价入口，行为一致 |
 | `GET` | `/api/task-status/{task_id}` | 轮询任务状态 |
 | `GET` | `/api/task-stream/{task_id}` | SSE 实时进度流 |
 | `GET` | `/api/download/{filename}` | 以附件形式下载结果（`.md` 或媒体文件），可选 `?name=` 指定友好文件名 |
 | `GET` | `/api/media/{filename}` | 内联播放媒体，支持 HTTP Range，可拖动进度条 |
 | `DELETE` | `/api/task/{task_id}` | 取消运行中的任务并删除记录 |
-| `POST` | `/api/models` | 代理：拉取任意 OpenAI 兼容服务商的模型列表 |
+| `GET` | `/api/litellm/models` | 返回模型列表（`ms.json`/`m.json`，页面下拉框用），含 `default` 默认模型 |
+| `POST` | `/api/models` | 旧版代理：拉取任意 OpenAI 兼容服务商的模型列表 |
 | `GET` | `/api/tasks/active` | 活跃任务计数（调试用） |
 
 <details>
@@ -327,13 +343,13 @@ Claude Desktop 则把同样的 command 和 args 加到 Claude Desktop 的 MCP �
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `url` | string | `""` | 视频/播客链接，上传文件时可不传 |
+| `url` | string | `""` | 视频/播客链接或抖音博主主页，上传文件时可不传 |
 | `file` | file | – | Multipart 上传，优先级高于 `url` |
 | `summary_language` | string | `zh` | 摘要目标语言代码 |
 | `download_video` | string | `1` | 传 `0`/`false`/`no`/`off` 可关闭原视频下载 |
-| `api_key` | string | `""` | 单次请求使用的 API Key，未传则回落到 `OPENAI_API_KEY` |
-| `model_base_url` | string | `""` | 单次请求使用的 OpenAI 兼容地址 |
-| `model_id` | string | `""` | 使用的模型，留空则用服务端默认 |
+| `model_id` | string | `""` | 模型列表中的模型 ID 或显示名，留空取第一个条目 |
+| `api_key` | string | `""` | 显式指定 OpenAI 兼容端点凭据；留空走 litellm（`llm-config.json`） |
+| `model_base_url` | string | `""` | 配合 `api_key` 使用的地址，litellm 模式下忽略 |
 
 ```bash
 # 转录链接，同时跳过原视频下载
@@ -373,9 +389,12 @@ AI-Video-Transcriber/
 │   ├── main.py             # FastAPI 应用、路由、任务编排
 │   ├── pipeline.py         # Web/CLI/MCP 共用的纯函数（含无语音判定）
 │   ├── video_processor.py  # yt-dlp：字幕、音频、原视频
+│   ├── douyin.py           # 抖音博主主页解析（SSR 数据 + 分页接口）
+│   ├── channel_processor.py# 博主批量模式：逐视频下载转录 → 合集文稿
 │   ├── transcriber.py      # Faster-Whisper 转录
 │   ├── summarizer.py       # 文稿优化 + 摘要
 │   ├── translator.py       # 条件式翻译
+│   ├── model_registry.py   # litellm 模型列表（ms.json/m.json）+ 凭据（llm-config.json）
 │   └── llm_sanitize.py     # LLM 输出后处理（去除套话等）
 ├── static/
 │   ├── index.html          # 页面结构与样式
@@ -386,6 +405,8 @@ AI-Video-Transcriber/
 ├── .env.example
 ├── requirements.txt
 ├── install.sh
+├── m.json                  # 兜底 litellm 模型列表（优先读 ~/.config/opencode/ms.json）
+├── llm-config.json         # litellm 网关凭据（已 gitignore）
 ├── start.py                # 启动脚本（--prod 禁用热重载）
 ├── transcribe.py           # 无头命令行入口（agent、脚本、定时任务）
 ├── mcp_server.py           # MCP 服务，暴露 transcribe_video 工具
@@ -403,13 +424,14 @@ AI-Video-Transcriber/
 
 ### 环境变量
 
-全部为可选项 —— 不配置也能运行，AI 凭据可直接在页面中填写。
+全部为可选项 —— 不配置也能运行，LLM 默认走 litellm 网关。
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `OPENAI_API_KEY` | API 密钥（服务端默认值） | – |
+| `OPENAI_API_KEY` | OpenAI 兼容服务商的 API Key（存在 litellm 凭据时不使用） | – |
 | `OPENAI_BASE_URL` | OpenAI 兼容端点 | 服务商默认 |
 | `OPENAI_TRANSLATION_MODEL` | 翻译使用的模型 | `gpt-4o` |
+| `DOUYIN_COOKIE` | 抖音浏览器 Cookie 字符串，提高博主主页解析成功率 | – |
 | `WHISPER_MODEL_SIZE` | Whisper 模型大小 | `base` |
 | `UPLOAD_MAX_MB` | 本地上传单文件大小上限（MB） | `200` |
 | `VIDEO_MAX_HEIGHT` | 原视频下载的清晰度上限 | `720` |
@@ -478,7 +500,7 @@ find temp -type f -mtime +7 ! -name 'tasks.json' -delete
 <details>
 <summary><b>AI 优化功能不可用怎么办？</b></summary>
 
-AI 功能需要任意 OpenAI 兼容服务商的 API Key。可直接在页面 **AI Settings** 面板中填写（无需重启），也可通过 `OPENAI_API_KEY` 设置服务端默认值。没有 Key 时转录仍然可用（Whisper 在本地运行），但优化、翻译和摘要会退化为基础排版。
+AI 功能需要 LLM 访问能力。默认经 litellm 网关连接 —— 检查 `llm-config.json` 是否可读（`~/.config/opencode/` 或项目根目录），然后在页面下拉框选择模型即可；也可设置 `OPENAI_API_KEY`（或给 CLI 传 `--api-key`）接入任意 OpenAI 兼容服务商。没有任何凭据时转录仍然可用（Whisper 在本地运行），但优化、翻译和摘要会退化为基础排版。
 
 </details>
 
@@ -489,7 +511,7 @@ AI 功能需要任意 OpenAI 兼容服务商的 API Key。可直接在页面 **A
 
 - 是否已激活虚拟环境：`source venv/bin/activate`
 - 依赖是否装在虚拟环境中：`pip install -r requirements.txt`
-- 是否在 **AI Settings** 面板配置了 API Key，或设置了 `OPENAI_API_KEY`
+- 已具备 litellm 凭据（`llm-config.json`），或设置了 `OPENAI_API_KEY`
 - 是否已安装 FFmpeg：macOS `brew install ffmpeg` / Debian/Ubuntu `sudo apt install ffmpeg`
 - 8000 端口是否被占用，或改用其他 `PORT`
 

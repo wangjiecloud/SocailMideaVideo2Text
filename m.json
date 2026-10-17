@@ -1,0 +1,200 @@
+{
+  "models": [
+    {
+      "name": "Claude-4.6-Sonnet",
+      "provider": "continue-proxy",
+      "model": "claude-sonnet-4.6",
+      "model_scope": "outer",
+      "orgScopeId": "f-devops",
+      "onPremProxyUrl": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+      "capabilities": ["tool_use", "image_input"],
+      "roles": ["chat", "edit"],
+      "defaultCompletionOptions": {
+        "reasoning": true,
+        "maxTokens": 16384,
+        "contextLength": 200000
+      }
+    },
+    {
+      "name": "Claude-4.5-Sonnet",
+      "provider": "continue-proxy",
+      "model": "claude-sonnet-4.5",
+      "model_scope": "outer",
+      "orgScopeId": "f-devops",
+      "onPremProxyUrl": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+      "capabilities": ["tool_use", "image_input"],
+      "roles": ["chat", "edit"],
+      "defaultCompletionOptions": {
+        "reasoning": true,
+        "maxTokens": 16384,
+        "contextLength": 200000
+      }
+    },
+    {
+      "name": "Claude-4.5-Haiku",
+      "provider": "continue-proxy",
+      "model": "claude-haiku-4.5",
+      "model_scope": "outer",
+      "orgScopeId": "f-devops",
+      "onPremProxyUrl": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+      "capabilities": ["tool_use", "image_input"],
+      "roles": ["chat", "edit"],
+      "defaultCompletionOptions": {
+        "reasoning": true,
+        "maxTokens": 16384,
+        "contextLength": 200000
+      }
+    },
+    {
+      "name": "Qwen3.6-Plus",
+      "provider": "continue-proxy",
+      "model": "qwen3.6-plus",
+      "model_scope": "outer",
+      "orgScopeId": "f-devops",
+      "onPremProxyUrl": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+      "capabilities": ["tool_use", "image_input"],
+      "roles": ["chat", "edit"],
+      "defaultCompletionOptions": {
+        "reasoning": true,
+        "maxTokens": 16384,
+        "contextLength": 200000
+      }
+    },
+    {
+      "name": "Gemini-3.1-Pro-Preview",
+      "provider": "continue-proxy",
+      "model": "gemini-3.1-pro-preview",
+      "model_scope": "outer",
+      "orgScopeId": "f-devops",
+      "onPremProxyUrl": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+      "capabilities": ["tool_use", "image_input"],
+      "roles": ["chat", "edit"],
+      "defaultCompletionOptions": {
+        "reasoning": true,
+        "maxTokens": 16384,
+        "contextLength": 1000000
+      }
+    },
+    {
+      "name": "Gemini-3-Flash",
+      "provider": "continue-proxy",
+      "model": "gemini-3-flash-preview",
+      "model_scope": "outer",
+      "orgScopeId": "f-devops",
+      "onPremProxyUrl": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+      "capabilities": ["tool_use", "image_input"],
+      "roles": ["chat", "edit"],
+      "defaultCompletionOptions": {
+        "reasoning": true,
+        "maxTokens": 16384,
+        "contextLength": 1000000
+      }
+    },
+    {
+      "name": "GPT-5.4",
+      "provider": "continue-proxy",
+      "model": "gpt-5.4",
+      "model_scope": "outer",
+      "orgScopeId": "f-devops",
+      "onPremProxyUrl": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+      "capabilities": ["tool_use", "image_input"],
+      "roles": ["chat", "edit"],
+      "defaultCompletionOptions": {
+        "maxTokens": 16384,
+        "contextLength": 400000
+      }
+    },
+    {
+      "name": "GPT-5.2-Codex",
+      "provider": "continue-proxy",
+      "model": "gpt-5.2-codex",
+      "model_scope": "outer",
+      "orgScopeId": "f-devops",
+      "onPremProxyUrl": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+      "capabilities": ["tool_use", "image_input"],
+      "roles": ["chat", "edit"],
+      "defaultCompletionOptions": {
+        "maxTokens": 16384,
+        "contextLength": 400000
+      }
+    },
+    {
+      "name": "GPT-5.2",
+      "provider": "continue-proxy",
+      "model": "gpt-5.2",
+      "model_scope": "outer",
+      "orgScopeId": "f-devops",
+      "onPremProxyUrl": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+      "capabilities": ["tool_use", "image_input"],
+      "roles": ["chat", "edit"],
+      "defaultCompletionOptions": {
+        "maxTokens": 16384,
+        "contextLength": 400000
+      }
+    },
+    {
+      "name": "GLM-5",
+      "provider": "continue-proxy",
+      "model": "glm-5",
+      "model_scope": "inner",
+      "orgScopeId": "f-devops",
+      "onPremProxyUrl": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+      "capabilities": ["tool_use"],
+      "roles": ["chat", "edit"],
+      "defaultCompletionOptions": {
+        "maxTokens": 16384,
+        "contextLength": 200000
+      }
+    },
+    {
+      "name": "Deepseek-v3.2",
+      "provider": "continue-proxy",
+      "model": "DeepSeek-V3.2",
+      "model_scope": "inner",
+      "orgScopeId": "f-devops",
+      "onPremProxyUrl": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+      "capabilities": ["tool_use"],
+      "roles": ["chat", "edit"],
+      "defaultCompletionOptions": {
+        "maxTokens": 16384,
+        "contextLength": 128000
+      }
+    },
+    {
+      "name": "Qwen3-Coder",
+      "provider": "continue-proxy",
+      "model": "qwen3-coder-480b-a35b-instruct",
+      "model_scope": "inner",
+      "orgScopeId": "f-devops",
+      "onPremProxyUrl": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+      "capabilities": ["tool_use"],
+      "roles": ["chat", "edit"],
+      "defaultCompletionOptions": {
+        "maxTokens": 16384,
+        "contextLength": 128000
+      }
+    },
+    {
+      "name": "Auto",
+      "provider": "continue-proxy",
+      "model": "auto_router",
+      "model_scope": "outer",
+      "orgScopeId": "f-devops",
+      "onPremProxyUrl": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+      "capabilities": ["tool_use", "image_input"],
+      "roles": ["chat", "edit"],
+      "defaultCompletionOptions": {
+        "reasoning": true,
+        "maxTokens": 16384,
+        "contextLength": 128000
+      }
+    },
+    {
+      "name": "Qwen-2.5-Coder-7B",
+      "provider": "vllm",
+      "model": "Qwen/Qwen-2.5-Coder-7B",
+      "apiBase": "https://apiprod.midea.com/llm/f-devops-python-fastapply-ft/v1",
+      "roles": ["autocomplete"]
+    }
+  ]
+}

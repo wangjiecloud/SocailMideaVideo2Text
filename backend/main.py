@@ -20,11 +20,14 @@ from video_processor import VideoProcessor
 from transcriber import Transcriber
 from summarizer import Summarizer
 from translator import Translator
+from channel_processor import ChannelProcessor
+import model_registry
 from pipeline import (
     MEDIA_MIME,
     NO_SPEECH_NOTICE,
     UPLOAD_ALLOWED_EXT,
     VIDEO_EXT,
+    is_douyin_profile_url as _is_douyin_profile_url,
     media_kind as _media_kind,
     sanitize_title_for_filename as _sanitize_title_for_filename,
     transcribed_speech as _transcribed_speech,
@@ -76,7 +79,9 @@ async def revalidate_frontend(request, call_next):
     """
     response = await call_next(request)
     path = request.url.path
-    if (path == "/" or path.startswith("/static/")) and "cache-control" not in response.headers:
+    if (
+        path == "/" or path.startswith("/static/")
+    ) and "cache-control" not in response.headers:
         response.headers["Cache-Control"] = "no-cache"
     return response
 
@@ -95,35 +100,41 @@ TEMP_DIR.mkdir(exist_ok=True)
 # 初始化处理器
 video_processor = VideoProcessor()
 transcriber = Transcriber()
-summarizer = Summarizer()
-translator = Translator()
+# LLM 默认走 litellm（m.json 模型列表 + llm-config.json 凭据），配置缺失时回退环境变量
+summarizer = Summarizer(**model_registry.resolve_llm_settings())
+translator = Translator(**model_registry.resolve_llm_settings())
 
 # 存储任务状态 - 使用文件持久化
 TASKS_FILE = TEMP_DIR / "tasks.json"
 tasks_lock = threading.Lock()
 
+
 def load_tasks():
     """加载任务状态"""
     try:
         if TASKS_FILE.exists():
-            with open(TASKS_FILE, 'r', encoding='utf-8') as f:
+            with open(TASKS_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
     except:
         pass
     return {}
 
+
 def save_tasks(tasks_data):
     """保存任务状态"""
     try:
         with tasks_lock:
-            with open(TASKS_FILE, 'w', encoding='utf-8') as f:
+            with open(TASKS_FILE, "w", encoding="utf-8") as f:
                 json.dump(tasks_data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"保存任务状态失败: {e}")
 
+
 async def broadcast_task_update(task_id: str, task_data: dict):
     """向所有连接的SSE客户端广播任务状态更新"""
-    logger.info(f"广播任务更新: {task_id}, 状态: {task_data.get('status')}, 连接数: {len(sse_connections.get(task_id, []))}")
+    logger.info(
+        f"广播任务更新: {task_id}, 状态: {task_data.get('status')}, 连接数: {len(sse_connections.get(task_id, []))}"
+    )
     if task_id in sse_connections:
         connections_to_remove = []
         for queue in sse_connections[task_id]:
@@ -133,14 +144,15 @@ async def broadcast_task_update(task_id: str, task_data: dict):
             except Exception as e:
                 logger.warning(f"发送消息到队列失败: {e}")
                 connections_to_remove.append(queue)
-        
+
         # 移除断开的连接
         for queue in connections_to_remove:
             sse_connections[task_id].remove(queue)
-        
+
         # 如果没有连接了，清理该任务的连接列表
         if not sse_connections[task_id]:
             del sse_connections[task_id]
+
 
 INTERRUPTED_MESSAGE = "服务重启，任务已中断，请重新提交"
 
@@ -153,11 +165,13 @@ def mark_interrupted_tasks(tasks_data: dict) -> int:
     count = 0
     for task in tasks_data.values():
         if task.get("status") == "processing":
-            task.update({
-                "status": "error",
-                "error": INTERRUPTED_MESSAGE,
-                "message": INTERRUPTED_MESSAGE,
-            })
+            task.update(
+                {
+                    "status": "error",
+                    "error": INTERRUPTED_MESSAGE,
+                    "message": INTERRUPTED_MESSAGE,
+                }
+            )
             count += 1
     return count
 
@@ -176,11 +190,13 @@ sse_connections = {}
 SUPERSEDED_MESSAGE = "已被同一链接的新任务（不同模型或摘要语言）取代"
 
 
-def task_settings(summary_language: str, model_base_url: str, model_id: str) -> dict:
-    """决定处理结果的设置；同一链接只有这些都相同时才复用正在跑的任务。"""
+def task_settings(summary_language: str, model_id: str) -> dict:
+    """决定处理结果的设置；同一链接只有这些都相同时才复用正在跑的任务。
+
+    模型网关地址由 model_id 经 m.json 解析得出，不参与比较。
+    """
     return {
         "summary_language": (summary_language or "").strip(),
-        "model_base_url": (model_base_url or "").strip().rstrip("/"),
         "model_id": (model_id or "").strip(),
     }
 
@@ -201,19 +217,23 @@ async def supersede_task(task_id: str) -> None:
     job = active_tasks.pop(task_id, None)
     if job is not None and not job.done():
         job.cancel()
-    tasks[task_id].update({
-        "status": "error",
-        "error": SUPERSEDED_MESSAGE,
-        "message": SUPERSEDED_MESSAGE,
-    })
+    tasks[task_id].update(
+        {
+            "status": "error",
+            "error": SUPERSEDED_MESSAGE,
+            "message": SUPERSEDED_MESSAGE,
+        }
+    )
     save_tasks(tasks)
     await broadcast_task_update(task_id, tasks[task_id])
+
 
 # 本地上传：允许的类型与大小上限（MB），可用环境变量 UPLOAD_MAX_MB 调整
 UPLOAD_MAX_MB = int(os.getenv("UPLOAD_MAX_MB", "200"))
 
 # 原视频下载：清晰度上限，避免 4K 源拖慢任务并占满磁盘
 VIDEO_MAX_HEIGHT = int(os.getenv("VIDEO_MAX_HEIGHT", "720"))
+
 
 def _resolve_temp_file(filename: str, allowed_ext: frozenset) -> Path:
     """校验前端传入的文件名并解析为 temp 目录下的真实路径。"""
@@ -222,7 +242,9 @@ def _resolve_temp_file(filename: str, allowed_ext: frozenset) -> Path:
 
     ext = Path(filename).suffix.lower()
     if ext not in allowed_ext:
-        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {ext or '(none)'}")
+        raise HTTPException(
+            status_code=400, detail=f"不支持的文件类型: {ext or '(none)'}"
+        )
 
     file_path = TEMP_DIR / filename
     # 二次防御：即使扩展名校验通过，也确认最终路径没跳出 temp
@@ -336,18 +358,24 @@ async def _run_post_extract_pipeline(
     # 视频里没有人说话时，绝不能把空文稿交给 LLM：模型会编造出一整段与视频
     # 毫无关系的对话，再经翻译、摘要放大，用户完全无法分辨真假。
     if not _transcribed_speech(raw_script):
-        logger.warning(f"任务 {task_id} 未检测到任何语音，跳过优化/翻译/摘要以避免 LLM 编造内容")
+        logger.warning(
+            f"任务 {task_id} 未检测到任何语音，跳过优化/翻译/摘要以避免 LLM 编造内容"
+        )
 
         media_filename, media_download_name = await _resolve_media(
             task_id, safe_title, media_task, media_filename, media_download_name
         )
 
-        detected_language = (transcriber.get_detected_language(raw_script) or "").strip()
+        detected_language = (
+            transcriber.get_detected_language(raw_script) or ""
+        ).strip()
         notice = NO_SPEECH_NOTICE
         script_with_title = f"# {video_title}\n\n{notice}\n\nsource: {source_ref}\n"
 
         script_filename = f"transcript_{safe_title}_{short_id}.md"
-        async with aiofiles.open(TEMP_DIR / script_filename, "w", encoding="utf-8") as f:
+        async with aiofiles.open(
+            TEMP_DIR / script_filename, "w", encoding="utf-8"
+        ) as f:
             await f.write(script_with_title)
 
         task_result = {
@@ -376,10 +404,12 @@ async def _run_post_extract_pipeline(
             del active_tasks[task_id]
         return
 
-    tasks[task_id].update({
-        "progress": 55,
-        "message": "正在优化转录文本...",
-    })
+    tasks[task_id].update(
+        {
+            "progress": 55,
+            "message": "正在优化转录文本...",
+        }
+    )
     save_tasks(tasks)
     await broadcast_task_update(task_id, tasks[task_id])
 
@@ -391,7 +421,9 @@ async def _run_post_extract_pipeline(
     detected_language = (detected_language or "").strip()
     if not detected_language:
         detected_language = translator.infer_language_code(raw_script)
-    detected_language = translator.normalize_lang_code(detected_language) or detected_language
+    detected_language = (
+        translator.normalize_lang_code(detected_language) or detected_language
+    )
 
     logger.info(f"检测到的语言: {detected_language}, 摘要语言: {summary_language}")
 
@@ -399,14 +431,12 @@ async def _run_post_extract_pipeline(
     translation_filename = None
     translation_path = None
 
-    eff_key = (api_key or "").strip()
-    eff_base = (model_base_url or "").strip().rstrip("/")
-    if eff_key:
-        request_translator = Translator(
-            api_key=eff_key,
-            base_url=eff_base or None,
-            model=model_id or None,
-        )
+    # 与请求级 Summarizer 保持同一套 LLM 解析，避免优化/摘要用一个模型、翻译用另一个
+    request_llm = model_registry.resolve_llm_settings(
+        model=model_id, api_key=api_key, base_url=model_base_url
+    )
+    if request_llm:
+        request_translator = Translator(**request_llm)
     else:
         request_translator = translator
 
@@ -416,17 +446,21 @@ async def _run_post_extract_pipeline(
 
     if need_translation:
         logger.info(f"需要翻译: {detected_language} -> {summary_language}")
-        tasks[task_id].update({
-            "progress": 70,
-            "message": "正在生成翻译...",
-        })
+        tasks[task_id].update(
+            {
+                "progress": 70,
+                "message": "正在生成翻译...",
+            }
+        )
         save_tasks(tasks)
         await broadcast_task_update(task_id, tasks[task_id])
 
         translation_content = await request_translator.translate_text(
             script, summary_language, detected_language
         )
-        translation_with_title = f"# {video_title}\n\n{translation_content}\n\nsource: {source_ref}\n"
+        translation_with_title = (
+            f"# {video_title}\n\n{translation_content}\n\nsource: {source_ref}\n"
+        )
         translation_filename = f"translation_{safe_title}_{short_id}.md"
         translation_path = TEMP_DIR / translation_filename
         async with aiofiles.open(translation_path, "w", encoding="utf-8") as f:
@@ -437,10 +471,12 @@ async def _run_post_extract_pipeline(
             f"need_translation={need_translation}"
         )
 
-    tasks[task_id].update({
-        "progress": 80,
-        "message": "正在生成摘要...",
-    })
+    tasks[task_id].update(
+        {
+            "progress": 80,
+            "message": "正在生成摘要...",
+        }
+    )
     save_tasks(tasks)
     await broadcast_task_update(task_id, tasks[task_id])
 
@@ -487,11 +523,13 @@ async def _run_post_extract_pipeline(
     }
 
     if translation_content and translation_path:
-        task_result.update({
-            "translation": translation_with_title,
-            "translation_path": str(translation_path),
-            "translation_filename": translation_filename,
-        })
+        task_result.update(
+            {
+                "translation": translation_with_title,
+                "translation_path": str(translation_path),
+                "translation_filename": translation_filename,
+            }
+        )
 
     task_result.update(_media_result_fields(media_filename, media_download_name))
 
@@ -512,10 +550,25 @@ async def read_root():
     """返回前端页面"""
     return FileResponse(str(PROJECT_ROOT / "static" / "index.html"))
 
+
+@app.get("/api/litellm/models")
+async def litellm_models():
+    """返回 m.json 中的模型列表（与 lunwenAgent 共用同一份配置）。"""
+    entries = model_registry.load_model_entries()
+    default_model = model_registry.default_model_id()
+    return {
+        "default_model": default_model,
+        "data": [
+            {"id": e["model"], "name": e["name"], "base_url": e["base_url"]}
+            for e in entries
+        ],
+    }
+
+
 @app.post("/api/models")
 async def list_models(
     base_url: str = Form(default=""),
-    api_key:  str = Form(default=""),
+    api_key: str = Form(default=""),
 ):
     """Proxy: fetch model list from any OpenAI-compatible API."""
     effective_key = api_key or os.getenv("OPENAI_API_KEY", "")
@@ -526,7 +579,7 @@ async def list_models(
 
     try:
         client = openai.OpenAI(api_key=effective_key, base_url=effective_url)
-        resp   = await asyncio.to_thread(client.models.list)
+        resp = await asyncio.to_thread(client.models.list)
         models = [{"id": m.id, "name": getattr(m, "name", m.id)} for m in resp.data]
         # Sort by id for readability
         models.sort(key=lambda x: x["id"])
@@ -630,7 +683,13 @@ async def process_video(
     处理视频链接或本地上传（multipart 中带 file 且无有效 URL 时走上传流程）。
     上传与 URL 共用此路径，便于反向代理只放行 /api/process-video 的环境。
     """
-    want_video = str(download_video).strip().lower() not in ("0", "false", "no", "off", "")
+    want_video = str(download_video).strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+        "",
+    )
     try:
         if file is not None and (file.filename or "").strip():
             return await _enqueue_upload_job(
@@ -645,9 +704,11 @@ async def process_video(
             )
 
         url = stripped
+        # 抖音博主主页：走批量转录（解析全部视频 → 逐个转录 → 合集 + 摘要）
+        is_channel = _is_douyin_profile_url(url)
 
         # 同一链接正在处理：设置相同则复用，换了模型或摘要语言则取消旧任务重新开始
-        settings = task_settings(summary_language, model_base_url, model_id)
+        settings = task_settings(summary_language, model_id)
         running_id = find_running_task(url)
         if running_id:
             if tasks[running_id].get("settings") == settings:
@@ -657,15 +718,15 @@ async def process_video(
 
         # 生成唯一任务ID
         task_id = str(uuid.uuid4())
-        
+
         # 标记URL为正在处理
         processing_urls.add(url)
-        
+
         # 初始化任务状态
         tasks[task_id] = {
             "status": "processing",
             "progress": 0,
-            "message": "开始处理视频...",
+            "message": "开始解析抖音博主主页..." if is_channel else "开始处理视频...",
             "script": None,
             "summary": None,
             "error": None,
@@ -673,22 +734,41 @@ async def process_video(
             "settings": settings,
         }
         save_tasks(tasks)
-        
+
         # 创建并跟踪异步任务
-        task = asyncio.create_task(
-            process_video_task(
-                task_id, url, summary_language, api_key, model_base_url, model_id, want_video
+        if is_channel:
+            task = asyncio.create_task(
+                process_channel_task(
+                    task_id,
+                    url,
+                    summary_language,
+                    api_key,
+                    model_base_url,
+                    model_id,
+                )
             )
-        )
+        else:
+            task = asyncio.create_task(
+                process_video_task(
+                    task_id,
+                    url,
+                    summary_language,
+                    api_key,
+                    model_base_url,
+                    model_id,
+                    want_video,
+                )
+            )
         active_tasks[task_id] = task
-        
+
         return {"task_id": task_id, "message": "任务已创建，正在处理中..."}
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"处理视频时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+
 
 async def process_video_task(
     task_id: str,
@@ -705,11 +785,9 @@ async def process_video_task(
     media_task = None
     try:
         # ── 阶段一：优先尝试获取平台字幕（快速路径） ──────────────────────
-        tasks[task_id].update({
-            "status": "processing",
-            "progress": 10,
-            "message": "正在检测视频字幕..."
-        })
+        tasks[task_id].update(
+            {"status": "processing", "progress": 10, "message": "正在检测视频字幕..."}
+        )
         save_tasks(tasks)
         await broadcast_task_update(task_id, tasks[task_id])
         await asyncio.sleep(0.1)
@@ -725,19 +803,22 @@ async def process_video_task(
                 )
             )
 
-        # 如果前端传入了 API 凭据，创建专用 Summarizer（线程安全，覆盖全局实例）
-        if api_key:
-            effective_url = model_base_url.rstrip("/") or None
-            request_summarizer = Summarizer(
-                api_key=api_key,
-                base_url=effective_url,
-                model=model_id or None,
+        # 用户选了模型或提供了凭据：按 m.json/litellm 解析后创建请求级 Summarizer
+        request_llm = model_registry.resolve_llm_settings(
+            model=model_id, api_key=api_key, base_url=model_base_url
+        )
+        if request_llm:
+            request_summarizer = Summarizer(**request_llm)
+            logger.info(
+                f"使用请求级 LLM 配置: model={request_llm.get('model')}, "
+                f"base_url={request_llm.get('base_url')}"
             )
-            logger.info(f"使用前端提供的 API Key，base_url={effective_url}, model={model_id or 'default'}")
         else:
-            request_summarizer = summarizer  # 全局实例（使用环境变量）
+            request_summarizer = summarizer  # 全局实例（litellm 默认/环境变量）
 
-        subtitle_text, sub_title, sub_lang = await video_processor.fetch_subtitles(url, TEMP_DIR)
+        subtitle_text, sub_title, sub_lang = await video_processor.fetch_subtitles(
+            url, TEMP_DIR
+        )
 
         if subtitle_text:
             # ── 快速路径：有字幕，跳过音频下载和 Whisper ──────────────────
@@ -746,18 +827,19 @@ async def process_video_task(
             # 把语言写入 transcriber，保持下游逻辑一致
             transcriber.last_detected_language = sub_lang
 
-            tasks[task_id].update({
-                "progress": 40,
-                "message": f"字幕获取成功（{sub_lang}），正在处理文本..."
-            })
+            tasks[task_id].update(
+                {
+                    "progress": 40,
+                    "message": f"字幕获取成功（{sub_lang}），正在处理文本...",
+                }
+            )
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
         else:
             # ── 慢速路径：无字幕，下载音频 → Whisper 转录 ─────────────────
-            tasks[task_id].update({
-                "progress": 15,
-                "message": "未找到字幕，正在下载视频音频..."
-            })
+            tasks[task_id].update(
+                {"progress": 15, "message": "未找到字幕，正在下载视频音频..."}
+            )
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
 
@@ -783,17 +865,15 @@ async def process_video_task(
                     url, TEMP_DIR, prefetched_title=sub_title or None
                 )
 
-            tasks[task_id].update({
-                "progress": 35,
-                "message": "音频下载完成，准备转录..."
-            })
+            tasks[task_id].update(
+                {"progress": 35, "message": "音频下载完成，准备转录..."}
+            )
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
 
-            tasks[task_id].update({
-                "progress": 40,
-                "message": "正在转录音频（Whisper）..."
-            })
+            tasks[task_id].update(
+                {"progress": 40, "message": "正在转录音频（Whisper）..."}
+            )
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
 
@@ -830,18 +910,132 @@ async def process_video_task(
             media_task.cancel()
         # 从处理列表中移除URL
         processing_urls.discard(url)
-        
+
         # 从活跃任务列表中移除
         if task_id in active_tasks:
             del active_tasks[task_id]
-            
-        tasks[task_id].update({
-            "status": "error",
-            "error": str(e),
-            "message": f"处理失败: {str(e)}"
-        })
+
+        tasks[task_id].update(
+            {"status": "error", "error": str(e), "message": f"处理失败: {str(e)}"}
+        )
         save_tasks(tasks)
         await broadcast_task_update(task_id, tasks[task_id])
+
+
+async def process_channel_task(
+    task_id: str,
+    url: str,
+    summary_language: str,
+    api_key: str = "",
+    model_base_url: str = "",
+    model_id: str = "",
+):
+    """
+    抖音博主主页批量转录任务。
+
+    解析博主全部视频 → 逐个「下载音频 → Whisper 转录」→ 按发布时间分节拼
+    合集文稿 → 整体做一次 LLM 摘要。不做逐视频的优化/翻译（几百个视频的
+    成本不现实），也不下载保留原视频（合集场景只有文本产物）。
+    """
+    try:
+        # 与单视频任务同一套 LLM 解析：请求级模型优先，litellm 兜底
+        request_llm = model_registry.resolve_llm_settings(
+            model=model_id, api_key=api_key, base_url=model_base_url
+        )
+        if request_llm:
+            request_summarizer = Summarizer(**request_llm)
+            logger.info(
+                f"博主任务使用请求级 LLM: model={request_llm.get('model')}, "
+                f"base_url={request_llm.get('base_url')}"
+            )
+        else:
+            request_summarizer = summarizer  # 全局实例（litellm 默认/环境变量）
+
+        channel_processor = ChannelProcessor(video_processor, transcriber)
+
+        async def on_progress(progress: int, message: str) -> None:
+            tasks[task_id].update({"progress": progress, "message": message})
+            save_tasks(tasks)
+            await broadcast_task_update(task_id, tasks[task_id])
+
+        result = await channel_processor.process_creator(
+            url=url,
+            summarizer=request_summarizer,
+            summary_language=summary_language,
+            work_dir=TEMP_DIR,
+            on_progress=on_progress,
+        )
+
+        title = result["title"]
+        safe_title = _sanitize_title_for_filename(title)
+        short_id = task_id.replace("-", "")[:6]
+
+        script_filename = f"transcript_{safe_title}_{short_id}.md"
+        script_path = TEMP_DIR / script_filename
+        async with aiofiles.open(script_path, "w", encoding="utf-8") as f:
+            await f.write(result["script"])
+
+        summary = result.get("summary") or ""
+        summary_path = None
+        if summary:
+            summary_filename = f"summary_{safe_title}_{short_id}.md"
+            summary_path = TEMP_DIR / summary_filename
+            async with aiofiles.open(summary_path, "w", encoding="utf-8") as f:
+                await f.write(summary + f"\n\nsource: {url}\n")
+
+        done_message = (
+            f"博主合集完成：共 {result['video_count']} 个视频"
+            f"（成功 {result['ok_count']}，无语音 {result['no_speech_count']}，"
+            f"失败 {result['failed_count']}）"
+        )
+
+        task_result = {
+            "status": "completed",
+            "progress": 100,
+            "message": done_message,
+            "video_title": title,
+            "script": result["script"],
+            "summary": summary,
+            "script_path": str(script_path),
+            "short_id": short_id,
+            "safe_title": safe_title,
+            "detected_language": result["detected_language"],
+            "summary_language": summary_language,
+            # 博主模式标记与统计，前端据此展示徽章与「第 x/n 个」进度
+            "channel": True,
+            "video_count": result["video_count"],
+            "ok_count": result["ok_count"],
+            "no_speech_count": result["no_speech_count"],
+            "failed_count": result["failed_count"],
+        }
+        if summary_path is not None:
+            task_result["summary_path"] = str(summary_path)
+        if result["no_speech"]:
+            task_result["no_speech"] = True
+        if result["failed"]:
+            task_result["failed_videos"] = result["failed"]
+
+        tasks[task_id].update(task_result)
+        save_tasks(tasks)
+        logger.info(f"博主任务完成，准备广播最终状态: {task_id}")
+        await broadcast_task_update(task_id, tasks[task_id])
+
+    except asyncio.CancelledError:
+        # 被新任务取代或被删除；状态与 active_tasks 已由取消方处理
+        logger.info(f"博主任务 {task_id} 已取消")
+        raise
+    except Exception as e:
+        logger.error(f"博主任务 {task_id} 处理失败: {str(e)}")
+        tasks[task_id].update(
+            {"status": "error", "error": str(e), "message": f"处理失败: {str(e)}"}
+        )
+        save_tasks(tasks)
+        await broadcast_task_update(task_id, tasks[task_id])
+    finally:
+        processing_urls.discard(url)
+        if task_id in active_tasks:
+            del active_tasks[task_id]
+
 
 @app.post("/api/process-upload")
 async def process_upload(
@@ -870,24 +1064,25 @@ async def process_upload_task(
 ):
     source_ref = f"upload:{original_name}"
     try:
-        if api_key:
-            effective_url = model_base_url.rstrip("/") or None
-            request_summarizer = Summarizer(
-                api_key=api_key,
-                base_url=effective_url,
-                model=model_id or None,
-            )
+        request_llm = model_registry.resolve_llm_settings(
+            model=model_id, api_key=api_key, base_url=model_base_url
+        )
+        if request_llm:
+            request_summarizer = Summarizer(**request_llm)
             logger.info(
-                f"上传任务使用前端 API Key，base_url={effective_url}, model={model_id or 'default'}"
+                f"上传任务使用请求级 LLM: model={request_llm.get('model')}, "
+                f"base_url={request_llm.get('base_url')}"
             )
         else:
             request_summarizer = summarizer
 
         if ext_lower == ".txt":
-            tasks[task_id].update({
-                "progress": 20,
-                "message": "正在读取文本文件...",
-            })
+            tasks[task_id].update(
+                {
+                    "progress": 20,
+                    "message": "正在读取文本文件...",
+                }
+            )
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
 
@@ -897,26 +1092,34 @@ async def process_upload_task(
             transcriber.last_detected_language = None
             raw_script = _txt_to_raw_transcript_markdown(body)
         else:
-            tasks[task_id].update({
-                "progress": 15,
-                "message": "正在转换音频格式...",
-            })
+            tasks[task_id].update(
+                {
+                    "progress": 15,
+                    "message": "正在转换音频格式...",
+                }
+            )
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
 
-            audio_path = await video_processor.normalize_local_media_to_m4a(saved_path, TEMP_DIR)
+            audio_path = await video_processor.normalize_local_media_to_m4a(
+                saved_path, TEMP_DIR
+            )
 
-            tasks[task_id].update({
-                "progress": 35,
-                "message": "音频准备完成，准备转录...",
-            })
+            tasks[task_id].update(
+                {
+                    "progress": 35,
+                    "message": "音频准备完成，准备转录...",
+                }
+            )
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
 
-            tasks[task_id].update({
-                "progress": 40,
-                "message": "正在转录音频（Whisper）...",
-            })
+            tasks[task_id].update(
+                {
+                    "progress": 40,
+                    "message": "正在转录音频（Whisper）...",
+                }
+            )
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
 
@@ -944,11 +1147,13 @@ async def process_upload_task(
         logger.error(f"任务 {task_id} 处理失败: {str(e)}")
         if task_id in active_tasks:
             del active_tasks[task_id]
-        tasks[task_id].update({
-            "status": "error",
-            "error": str(e),
-            "message": f"处理失败: {str(e)}",
-        })
+        tasks[task_id].update(
+            {
+                "status": "error",
+                "error": str(e),
+                "message": f"处理失败: {str(e)}",
+            }
+        )
         save_tasks(tasks)
         await broadcast_task_update(task_id, tasks[task_id])
 
@@ -960,8 +1165,9 @@ async def get_task_status(task_id: str):
     """
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
-    
+
     return tasks[task_id]
+
 
 @app.get("/api/task-stream/{task_id}")
 async def task_stream(task_id: str):
@@ -970,16 +1176,16 @@ async def task_stream(task_id: str):
     """
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
-    
+
     async def event_generator():
         # 创建任务专用的队列
         queue = asyncio.Queue()
-        
+
         # 将队列添加到连接列表
         if task_id not in sse_connections:
             sse_connections[task_id] = []
         sse_connections[task_id].append(queue)
-        
+
         try:
             # 立即发送当前状态
             current_task = tasks.get(task_id, {})
@@ -987,23 +1193,23 @@ async def task_stream(task_id: str):
             # 任务已结束就不再挂着连接，否则这条流永远不会关闭
             if current_task.get("status") in ["completed", "error"]:
                 return
-            
+
             # 持续监听状态更新
             while True:
                 try:
                     # 等待状态更新，超时时间30秒发送心跳
                     data = await asyncio.wait_for(queue.get(), timeout=30.0)
                     yield f"data: {data}\n\n"
-                    
+
                     # 如果任务完成或失败，结束流
                     task_data = json.loads(data)
                     if task_data.get("status") in ["completed", "error"]:
                         break
-                        
+
                 except asyncio.TimeoutError:
                     # 发送心跳保持连接
                     yield f"data: {json.dumps({'type': 'heartbeat'}, ensure_ascii=False)}\n\n"
-                    
+
         except asyncio.CancelledError:
             logger.info(f"SSE连接被取消: {task_id}")
         except Exception as e:
@@ -1014,7 +1220,7 @@ async def task_stream(task_id: str):
                 sse_connections[task_id].remove(queue)
                 if not sse_connections[task_id]:
                     del sse_connections[task_id]
-    
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -1023,9 +1229,10 @@ async def task_stream(task_id: str):
             "Connection": "keep-alive",
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET",
-            "Access-Control-Allow-Headers": "Cache-Control"
-        }
+            "Access-Control-Allow-Headers": "Cache-Control",
+        },
     )
+
 
 DOWNLOAD_ALLOWED_EXT = frozenset({".md"}) | frozenset(MEDIA_MIME)
 
@@ -1068,7 +1275,10 @@ async def stream_media(filename: str):
         return FileResponse(
             file_path,
             media_type=MEDIA_MIME[file_path.suffix.lower()],
-            headers={"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600"},
+            headers={
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "private, max-age=3600",
+            },
         )
     except HTTPException:
         raise
@@ -1084,7 +1294,7 @@ async def delete_task(task_id: str):
     """
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
-    
+
     # 如果任务还在运行，先取消它
     if task_id in active_tasks:
         task = active_tasks[task_id]
@@ -1092,15 +1302,16 @@ async def delete_task(task_id: str):
             task.cancel()
             logger.info(f"任务 {task_id} 已被取消")
         del active_tasks[task_id]
-    
+
     # 从处理URL列表中移除
     task_url = tasks[task_id].get("url")
     if task_url:
         processing_urls.discard(task_url)
-    
+
     # 删除任务记录
     del tasks[task_id]
     return {"message": "任务已取消并删除"}
+
 
 @app.get("/api/tasks/active")
 async def get_active_tasks():
@@ -1112,9 +1323,11 @@ async def get_active_tasks():
     return {
         "active_tasks": active_count,
         "processing_urls": processing_count,
-        "task_ids": list(active_tasks.keys())
+        "task_ids": list(active_tasks.keys()),
     }
+
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

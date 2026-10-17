@@ -27,9 +27,13 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
+from channel_processor import ChannelProcessor  # noqa: E402
+from douyin import DouyinError  # noqa: E402
+from model_registry import resolve_llm_settings  # noqa: E402
 from pipeline import (  # noqa: E402
     NO_SPEECH_NOTICE,
     UPLOAD_ALLOWED_EXT,
+    is_douyin_profile_url,
     media_kind,
     sanitize_title_for_filename,
     transcribed_speech,
@@ -140,6 +144,61 @@ async def _extract_from_file(args, vp, transcriber, out_dir, quiet):
     return raw_script, title, str(src) if args.keep_video else None
 
 
+async def _run_channel(args, vp, transcriber, summarizer, out_dir, quiet) -> dict:
+    """抖音博主主页：批量转录全部视频，输出按发布时间分节的合集文稿。
+
+    与单视频流程的区别：不做逐视频的 LLM 优化/翻译（几百个视频成本不现实），
+    只做「逐视频 Whisper 转录 → 合集拼接 → 一次整体摘要」。
+    """
+    channel = ChannelProcessor(vp, transcriber)
+
+    def on_progress(progress: int, message: str) -> None:
+        _log(f"· [{progress}%] {message}", quiet)
+
+    result = await channel.process_creator(
+        url=args.source,
+        summarizer=summarizer,
+        summary_language=args.summary_language,
+        work_dir=out_dir,
+        on_progress=on_progress,
+        no_llm=args.no_llm,
+    )
+
+    title = result["title"]
+    safe_title = sanitize_title_for_filename(title)
+    stem = safe_title[:60] or "untitled"
+
+    written = {}
+
+    def write(kind: str, text: str) -> str:
+        path = out_dir / f"{kind}_{stem}.md"
+        path.write_text(text, encoding="utf-8")
+        written[kind] = str(path)
+        return str(path)
+
+    # 合集文稿由 channel_processor 完整生成（含标题与 source 行）
+    write("transcript", result["script"])
+
+    if result["summary"]:
+        write("summary", f"{result['summary']}\n\nsource: {args.source}\n")
+
+    return {
+        "source": args.source,
+        "title": title,
+        "no_speech": result["no_speech"],
+        "detected_language": result["detected_language"] or None,
+        "summary_language": args.summary_language,
+        "files": written,
+        "media": None,
+        # 博主模式统计（成功/无语音/失败按视频数计）
+        "channel": True,
+        "video_count": result["video_count"],
+        "ok_count": result["ok_count"],
+        "no_speech_count": result["no_speech_count"],
+        "failed_count": result["failed_count"],
+    }
+
+
 async def run(args) -> dict:
     quiet = args.quiet or args.json
     out_dir = Path(args.output_dir).expanduser().resolve()
@@ -147,10 +206,22 @@ async def run(args) -> dict:
 
     vp = VideoProcessor()
     transcriber = Transcriber(model_size=args.whisper_model)
-    summarizer = Summarizer(api_key=args.api_key, base_url=args.base_url, model=args.model)
-    translator = Translator(api_key=args.api_key, base_url=args.base_url, model=args.model)
+    # LLM 默认走 litellm（ms.json/m.json 模型列表 + llm-config.json 凭据）；显式 --api-key/--base-url 优先
+    llm_settings = resolve_llm_settings(
+        model=args.model, api_key=args.api_key, base_url=args.base_url
+    )
+    summarizer = Summarizer(**llm_settings)
+    translator = Translator(**llm_settings)
 
     is_url = _looks_like_url(args.source)
+
+    # 抖音博主主页：批量转录全部视频（合集 + 整体摘要），解析失败按预期错误处理
+    if is_url and is_douyin_profile_url(args.source):
+        try:
+            return await _run_channel(args, vp, transcriber, summarizer, out_dir, quiet)
+        except DouyinError as e:
+            raise TranscribeError(str(e)) from e
+
     extract = _extract_from_url if is_url else _extract_from_file
     raw_script, title, media_path = await extract(args, vp, transcriber, out_dir, quiet)
 
@@ -192,7 +263,9 @@ async def run(args) -> dict:
         result["detected_language"] = (
             transcriber.get_detected_language(raw_script) or ""
         ).strip() or None
-        write("transcript", f"# {title}\n\n{NO_SPEECH_NOTICE}\n\nsource: {source_ref}\n")
+        write(
+            "transcript", f"# {title}\n\n{NO_SPEECH_NOTICE}\n\nsource: {source_ref}\n"
+        )
         return result
 
     if args.no_llm:
@@ -232,24 +305,59 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=__doc__.split("用法：")[-1],
     )
     p.add_argument("source", help="视频/播客 URL，或本地音视频/.txt 文件路径")
-    p.add_argument("-l", "--summary-language", default=os.getenv("SUMMARY_LANGUAGE", "en"),
-                   help="摘要输出语言，默认 en")
-    p.add_argument("-o", "--output-dir", default="./temp",
-                   help="Markdown 与媒体输出目录，默认 ./temp")
-    p.add_argument("--no-video", dest="keep_video", action="store_false",
-                   help="不下载/不保留原视频（只要文本时更快更省空间）")
-    p.add_argument("--no-llm", action="store_true",
-                   help="只输出转录文本，跳过优化/翻译/摘要（无需 API Key）")
-    p.add_argument("--whisper-model", default=os.getenv("WHISPER_MODEL_SIZE", "base"),
-                   choices=["tiny", "base", "small", "medium", "large"],
-                   help="Whisper 模型大小，默认 base")
-    p.add_argument("--video-max-height", type=int,
-                   default=int(os.getenv("VIDEO_MAX_HEIGHT", "720")),
-                   help="原视频下载清晰度上限，默认 720")
-    p.add_argument("--api-key", default=None, help="OpenAI 兼容 API Key，默认读 OPENAI_API_KEY")
-    p.add_argument("--base-url", default=None, help="OpenAI 兼容地址，默认读 OPENAI_BASE_URL")
-    p.add_argument("--model", default=None, help="使用的模型 ID，默认服务端/环境默认值")
-    p.add_argument("--json", action="store_true", help="stdout 输出 JSON（供程序/agent 解析）")
+    p.add_argument(
+        "-l",
+        "--summary-language",
+        default=os.getenv("SUMMARY_LANGUAGE", "en"),
+        help="摘要输出语言，默认 en",
+    )
+    p.add_argument(
+        "-o",
+        "--output-dir",
+        default="./temp",
+        help="Markdown 与媒体输出目录，默认 ./temp",
+    )
+    p.add_argument(
+        "--no-video",
+        dest="keep_video",
+        action="store_false",
+        help="不下载/不保留原视频（只要文本时更快更省空间）",
+    )
+    p.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="只输出转录文本，跳过优化/翻译/摘要（无需 API Key）",
+    )
+    p.add_argument(
+        "--whisper-model",
+        default=os.getenv("WHISPER_MODEL_SIZE", "base"),
+        choices=["tiny", "base", "small", "medium", "large"],
+        help="Whisper 模型大小，默认 base",
+    )
+    p.add_argument(
+        "--video-max-height",
+        type=int,
+        default=int(os.getenv("VIDEO_MAX_HEIGHT", "720")),
+        help="原视频下载清晰度上限，默认 720",
+    )
+    p.add_argument(
+        "--api-key",
+        default=None,
+        help="OpenAI 兼容 API Key，默认走 litellm（llm-config.json）或 OPENAI_API_KEY",
+    )
+    p.add_argument(
+        "--base-url",
+        default=None,
+        help="OpenAI 兼容地址，默认走 litellm（ms.json/m.json）或 OPENAI_BASE_URL",
+    )
+    p.add_argument(
+        "--model",
+        default=None,
+        help="模型 ID 或模型列表中的名称（如 claude-sonnet-5），默认列表首个模型",
+    )
+    p.add_argument(
+        "--json", action="store_true", help="stdout 输出 JSON（供程序/agent 解析）"
+    )
     p.add_argument("-q", "--quiet", action="store_true", help="不打印进度信息")
     return p
 
@@ -284,7 +392,9 @@ def main() -> int:
             print(f"  {kind:11} {path}")
         if result["media"]:
             mb = result["media"]["size_bytes"] / (1024 * 1024)
-            print(f"  {result['media']['kind']:11} {result['media']['path']} ({mb:.1f} MB)")
+            print(
+                f"  {result['media']['kind']:11} {result['media']['path']} ({mb:.1f} MB)"
+            )
     return 0
 
 

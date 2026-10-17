@@ -272,7 +272,7 @@
       pointer-events: none;
     }
 
-    /* ── Settings row (toggle + summary lang + video switch) ── */
+    /* ── Settings row (model + summary lang + video switch) ── */
     .settings-row {
       display: flex;
       align-items: center;
@@ -335,6 +335,7 @@
       box-shadow: 0 0 0 3px rgba(var(--glow), .12);
     }
     .inline-lang-select option { background: var(--surface-2); }
+    #modelSelect { max-width: 220px; }
 
     /* Toggle switch — "keep original video" */
     .switch-wrap {
@@ -390,98 +391,6 @@
     }
     .switch-wrap:hover .switch-text { color: var(--text-muted); }
     .switch-wrap input:checked ~ .switch-text { color: var(--text-muted); }
-
-    .settings-body {
-      overflow: hidden;
-      max-height: 0;
-      transition: max-height .3s ease, margin-top .3s;
-    }
-    .settings-body.open {
-      max-height: 240px;
-      margin-top: 12px;
-    }
-
-    .settings-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--r-sm);
-      padding: 16px;
-    }
-    .settings-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px;
-    }
-    .settings-grid .span2 { grid-column: 1 / -1; }
-
-    .s-label {
-      display: block;
-      font-family: var(--mono);
-      font-size: 10.5px;
-      font-weight: 650;
-      text-transform: uppercase;
-      letter-spacing: .09em;
-      color: var(--text-muted);
-      margin-bottom: 5px;
-    }
-
-    .s-input, .s-select {
-      width: 100%;
-      background: var(--surface-2);
-      border: 1px solid var(--border);
-      border-radius: var(--r-sm);
-      color: var(--text);
-      font-size: 13px;
-      padding: 8px 11px;
-      outline: none;
-      transition: border-color .2s, box-shadow .2s;
-    }
-    .s-input::placeholder { color: var(--text-dim); }
-    .s-input:focus, .s-select:focus {
-      border-color: var(--accent-dim);
-      box-shadow: 0 0 0 3px rgba(var(--glow), .12);
-    }
-
-    .s-select {
-      cursor: pointer;
-      appearance: none;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238b94a6' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: right 10px center;
-      padding-right: 28px;
-    }
-    .s-select option { background: var(--surface-2); }
-
-    .key-row { display: flex; gap: 7px; }
-    .key-row .s-input { flex: 1; min-width: 0; }
-
-    .btn-fetch {
-      background: var(--surface-3);
-      border: 1px solid var(--border);
-      color: var(--text-muted);
-      border-radius: var(--r-sm);
-      padding: 8px 11px;
-      font-size: 12px;
-      font-weight: 500;
-      cursor: pointer;
-      white-space: nowrap;
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      transition: all .2s;
-    }
-    .btn-fetch:hover { border-color: var(--accent-dim); color: var(--accent-text); }
-    .btn-fetch:disabled { opacity: .5; cursor: not-allowed; }
-
-    .fetch-status {
-      font-family: var(--mono);
-      font-size: 11px;
-      margin-top: 4px;
-      min-height: 16px;
-    }
-    .fetch-status.ok  { color: var(--success); }
-    .fetch-status.err { color: var(--error); }
 
     /* ── Result panel ────────────────────────────────────── */
     .result-panel {
@@ -553,6 +462,11 @@
       color: var(--accent-text);
       border-color: rgba(var(--glow),.35);
       background: rgba(var(--glow),.08);
+    }
+    .mode-badge.channel {
+      color: #c4b5fd;
+      border-color: rgba(167,139,250,.4);
+      background: rgba(139,92,246,.12);
     }
     .prog-bar {
       width: 100%;
@@ -831,7 +745,7 @@
           id="videoUrl"
           type="url"
           class="url-input"
-          placeholder="Paste YouTube, Tiktok, Bilibili or other platform video URLs..."
+          placeholder="Paste a video URL, or a Douyin creator page (douyin.com/user/...) to transcribe all their videos..."
           data-i18n-placeholder="video_url_placeholder"
           required
         >
@@ -855,9 +769,16 @@
     <input type="file" id="fileInput" accept=".txt,.mp3,.mp4,.m4a,.wav,.webm,.mkv,.ogg,.flac" hidden>
   </div>
 
-  <!-- Settings row: Summary Language + keep-video switch + AI Settings toggle -->
+  <!-- Settings row: Model + Summary Language + keep-video switch -->
   <div class="settings-row">
     <div class="settings-row-left">
+      <div class="inline-lang">
+        <label class="inline-lang-label" for="modelSelect" data-i18n="model_select">Model</label>
+        <select id="modelSelect" class="inline-lang-select">
+          <option value="" data-i18n="model_default">— server default —</option>
+        </select>
+      </div>
+
       <div class="inline-lang">
         <label class="inline-lang-label" for="summaryLanguage" data-i18n="summary_language">Summary Language</label>
         <select id="summaryLanguage" class="inline-lang-select">
@@ -880,61 +801,6 @@
         <span class="switch-track"><span class="switch-dot"></span></span>
         <span class="switch-text" data-i18n="keep_video">Keep original video</span>
       </label>
-    </div>
-
-    <button class="settings-toggle" id="settingsToggle">
-      <i class="fas fa-sliders-h" style="font-size:10px;"></i>
-      <span data-i18n="ai_settings">AI Settings</span>
-      <i class="fas fa-chevron-down arrow"></i>
-    </button>
-  </div>
-
-  <div class="settings-body" id="settingsBody">
-    <div class="settings-card">
-      <div class="settings-grid">
-
-        <!-- Base URL (full row) -->
-        <div class="span2">
-          <label class="s-label" data-i18n="model_base_url">Model API Base URL</label>
-          <input
-            id="modelBaseUrl"
-            class="s-input"
-            type="url"
-            placeholder="https://openrouter.ai/api/v1"
-            data-i18n-placeholder="model_base_url_placeholder"
-            autocomplete="off"
-          >
-        </div>
-
-        <!-- API Key -->
-        <div>
-          <label class="s-label" data-i18n="api_key">API Key</label>
-          <div class="key-row">
-            <input
-              id="apiKeyInput"
-              class="s-input"
-              type="password"
-              placeholder="sk-..."
-              data-i18n-placeholder="api_key_placeholder"
-              autocomplete="new-password"
-            >
-            <button type="button" id="fetchModelsBtn" class="btn-fetch">
-              <i class="fas fa-sync-alt" id="fetchIcon"></i>
-              <span data-i18n="fetch_models">Fetch</span>
-            </button>
-          </div>
-          <div id="fetchStatus" class="fetch-status"></div>
-        </div>
-
-        <!-- Model selector -->
-        <div>
-          <label class="s-label" data-i18n="model_select">Model</label>
-          <select id="modelSelect" class="s-select">
-            <option value="" data-i18n="model_default">— use server default —</option>
-          </select>
-        </div>
-
-      </div>
     </div>
   </div>
 
@@ -1035,6 +901,6 @@
   </div>
 </main>
 
-<script src="/static/app.js?v=20261011"></script>
+  <script src="/static/app.js?v=20261016b"></script>
 </body>
 </html>

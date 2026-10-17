@@ -65,7 +65,7 @@ def _args_namespace(**overrides: Any) -> argparse.Namespace:
         api_key=None,
         base_url=None,
         model=None,
-        json=True,   # 抑制人类可读输出
+        json=True,  # 抑制人类可读输出
         quiet=True,  # 进度信息不能污染 stdio 上的 MCP 协议流
     )
     defaults.update(overrides)
@@ -78,6 +78,9 @@ def _args_namespace(**overrides: Any) -> argparse.Namespace:
     description=(
         "Transcribe and summarize a video/podcast URL (YouTube, TikTok, Bilibili, "
         "Apple Podcasts, SoundCloud, and 30+ more) or a local media/.txt file. "
+        "A Douyin creator page URL (douyin.com/user/...) transcribes ALL of that "
+        "creator's videos into one collection, sections separated by each video's "
+        "publish time, with a single overall summary (no per-video LLM passes). "
         "Returns the transcript text, a summary, an optional translation, and paths to "
         "the Markdown files written to disk. Set no_llm=true to get only the raw "
         "transcript with no API key required. When the source has no speech at all, "
@@ -86,18 +89,34 @@ def _args_namespace(**overrides: Any) -> argparse.Namespace:
     ),
 )
 async def transcribe_video(
-    source: Annotated[str, Field(description="Video/podcast URL, or an absolute path to a local media or .txt file")],
+    source: Annotated[
+        str,
+        Field(
+            description="Video/podcast URL, or an absolute path to a local media or .txt file"
+        ),
+    ],
     summary_language: Annotated[
         Literal["en", "zh", "es", "fr", "de", "it", "pt", "ru", "ja", "ko", "ar"],
-        Field(description="Language for the summary (and translation, if the source differs)"),
+        Field(
+            description="Language for the summary (and translation, if the source differs)"
+        ),
     ] = "en",
-    no_llm: Annotated[bool, Field(description="Skip optimize/translate/summarize; return the raw transcript only. Needs no API key")] = False,
-    keep_video: Annotated[bool, Field(description="Also download and keep the original video file")] = False,
+    no_llm: Annotated[
+        bool,
+        Field(
+            description="Skip optimize/translate/summarize; return the raw transcript only. Needs no API key"
+        ),
+    ] = False,
+    keep_video: Annotated[
+        bool, Field(description="Also download and keep the original video file")
+    ] = False,
     whisper_model: Annotated[
         Literal["tiny", "base", "small", "medium", "large"],
         Field(description="Whisper model size; larger is more accurate but slower"),
     ] = "base",
-    output_dir: Annotated[Optional[str], Field(description="Directory for the generated Markdown files")] = None,
+    output_dir: Annotated[
+        Optional[str], Field(description="Directory for the generated Markdown files")
+    ] = None,
 ) -> dict:
     args = _args_namespace(
         source=source,

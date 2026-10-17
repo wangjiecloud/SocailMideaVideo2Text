@@ -1,6 +1,6 @@
 ---
 name: video-transcribe
-description: Transcribe and summarize a video or podcast from a URL (YouTube, TikTok, Bilibili, Apple Podcasts, SoundCloud, 30+ platforms) or from a local media/.txt file. Use when the user shares a video/podcast link or media file and wants a transcript, summary, translation, or the original video downloaded. Triggers on "transcribe", "summarize this video", "what does this video say", "get the transcript", "转录", "视频摘要".
+description: Transcribe and summarize a video or podcast from a URL (YouTube, TikTok, Bilibili, Apple Podcasts, SoundCloud, 30+ platforms) or from a local media/.txt file. Also transcribes a Douyin creator page (douyin.com/user/...) into one timestamped collection of all their videos. Use when the user shares a video/podcast link or media file and wants a transcript, summary, translation, or the original video downloaded. Triggers on "transcribe", "summarize this video", "what does this video say", "get the transcript", "转录", "视频摘要".
 ---
 
 # Video Transcribe
@@ -19,6 +19,7 @@ ls venv/bin/python && command -v ffmpeg
 
 - No venv: run `./install.sh`, or `python3 -m venv venv && venv/bin/pip install -r requirements.txt`.
 - No ffmpeg: install it first with `brew install ffmpeg` on macOS or `sudo apt install ffmpeg` on Debian/Ubuntu. Do not proceed without it; audio extraction will fail.
+- Douyin creator pages additionally need `curl_cffi` (in requirements.txt); plain HTTP clients get reset by Douyin's TLS fingerprinting.
 
 ## Run it
 
@@ -39,9 +40,14 @@ Useful flags:
 | `--whisper-model small` | Accuracy matters more than speed. `tiny` to `large`, default `base` |
 | `-o <dir>` | Write the Markdown somewhere other than `./temp` |
 
-The LLM steps need an OpenAI-compatible key via `OPENAI_API_KEY` and optionally
-`OPENAI_BASE_URL`. Without one the pipeline still transcribes but falls back to
-basic formatting; prefer `--no-llm` when the user only needs the transcript.
+The LLM steps default to the litellm gateway: the model list comes from
+`~/.config/opencode/ms.json` (the same file lunwenAgent reads at runtime, so it
+stays in sync) with the bundled `m.json` as fallback, and credentials from
+`llm-config.json` (repo root, gitignored; a global copy at
+`~/.config/opencode/llm-config.json` takes priority). Alternatively set
+`OPENAI_API_KEY` and optionally `OPENAI_BASE_URL`. Without either the pipeline
+still transcribes but falls back to basic formatting; prefer `--no-llm` when the
+user only needs the transcript.
 
 Provider settings:
 
@@ -52,8 +58,9 @@ export OPENAI_TRANSLATION_MODEL="gpt-4o"  # optional
 ```
 
 For a one-off run, `transcribe.py` also accepts `--api-key`, `--base-url`, and
-`--model`. Prefer environment variables when possible so API keys are not written
-to shell history.
+`--model` (a model ID from the model list such as `claude-sonnet-5`, or any
+name). Prefer
+environment variables when possible so API keys are not written to shell history.
 
 ## Reading the result
 
@@ -69,6 +76,30 @@ to shell history.
 
 Read the `transcript` and `summary` paths to get the content. `translation` is
 present only when the source language differs from the summary language.
+
+## Douyin creator pages
+
+A Douyin creator page URL (`https://www.douyin.com/user/<sec_uid>`, or
+`/user/profile?sec_uid=...`) switches the pipeline into batch mode: it parses the
+creator's video list, transcribes every video, and writes ONE collection where
+each section is headed `## [YYYY-MM-DD HH:MM] <video title>` (the video's
+publish time). There is no per-video optimize/translate — only a single overall
+summary — because a creator may have hundreds of videos.
+
+- Set `DOUYIN_COOKIE` (raw Cookie string from a logged-in browser) to raise the
+  success rate; anonymous requests are usually limited to the creator's first
+  page of videos by Douyin's risk control.
+- Result JSON gains `"channel": true`, `"video_count"`, `"ok_count"`,
+  `"no_speech_count"`, `"failed_count"`; per-video failures are skipped and
+  listed, they do not fail the whole run.
+- `"no_speech": true` still means "nothing to transcribe" — here: none of the
+  videos contained speech. Same rule: do not invent content.
+
+Failure modes specific to Douyin: `www.douyin.com` is unreachable from some
+corporate networks (TLS reset), and the parsing may hit a risk-control page.
+Both surface as a clear error message; suggest setting `DOUYIN_COOKIE` or
+switching networks, and note that a single video URL
+(`douyin.com/video/<id>`) goes through the normal yt-dlp path instead.
 
 ## Critical: `no_speech`
 

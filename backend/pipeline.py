@@ -10,15 +10,15 @@ import re
 
 # 能作为「原视频/原音频」提供的媒体类型
 MEDIA_MIME = {
-    ".mp4":  "video/mp4",
-    ".mkv":  "video/x-matroska",
+    ".mp4": "video/mp4",
+    ".mkv": "video/x-matroska",
     ".webm": "video/webm",
-    ".mov":  "video/quicktime",
-    ".flv":  "video/x-flv",
-    ".m4a":  "audio/mp4",
-    ".mp3":  "audio/mpeg",
-    ".wav":  "audio/wav",
-    ".ogg":  "audio/ogg",
+    ".mov": "video/quicktime",
+    ".flv": "video/x-flv",
+    ".m4a": "audio/mp4",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
     ".flac": "audio/flac",
 }
 VIDEO_EXT = frozenset({".mp4", ".mkv", ".webm", ".mov", ".flv"})
@@ -64,7 +64,7 @@ def transcribed_speech(raw_script: str) -> str:
 
     marker = "## Transcription Content"
     idx = raw_script.find(marker)
-    body = raw_script[idx + len(marker):] if idx >= 0 else raw_script
+    body = raw_script[idx + len(marker) :] if idx >= 0 else raw_script
 
     # 时间戳标记（**[00:00 - 00:03]**）本身不算语音内容
     body = re.sub(r"\*\*\[[^\]]*\]\*\*", " ", body)
@@ -84,13 +84,63 @@ def transcribed_speech(raw_script: str) -> str:
 def txt_to_raw_transcript_markdown(body: str) -> str:
     """将纯文本包装为与 Whisper 输出结构一致的 Markdown。"""
     text = body.strip() if body.strip() else "(empty)"
-    return "\n".join([
-        "# Video Transcription",
-        "",
-        "**Detected Language:**",
-        "**Language Probability:** —",
-        "",
-        "## Transcription Content",
-        "",
-        text,
-    ])
+    return "\n".join(
+        [
+            "# Video Transcription",
+            "",
+            "**Detected Language:**",
+            "**Language Probability:** —",
+            "",
+            "## Transcription Content",
+            "",
+            text,
+        ]
+    )
+
+
+# 抖音博主主页：douyin.com/user/<sec_uid>（含 ?sec_uid= 查询参数形态）
+_DOUYIN_PROFILE_RE = re.compile(
+    r"^https?://(?:www\.)?douyin\.com/user/"
+    r"(?:profile\?(?:.*&)?sec_uid=)?"
+    r"(?P<sec_uid>MS4wLjABAAAA[A-Za-z0-9._-]+)",
+    re.IGNORECASE,
+)
+
+
+def douyin_sec_uid(url: str) -> str:
+    """从抖音博主主页 URL 提取 sec_uid；不是博主主页时返回空字符串。"""
+    if not url:
+        return ""
+    match = _DOUYIN_PROFILE_RE.match(url.strip())
+    return match.group("sec_uid") if match else ""
+
+
+def is_douyin_profile_url(url: str) -> bool:
+    """判断 URL 是否为抖音博主主页（区别于单视频 douyin.com/video/<id>）。"""
+    return bool(douyin_sec_uid(url))
+
+
+def strip_transcript_meta(raw_script: str) -> str:
+    """去掉 Whisper 输出的标题与语言元信息，保留时间戳与正文段落。
+
+    博主合集场景逐视频拼接时用它避免每个小节都重复一遍
+    “# Video Transcription / **Detected Language:**”头。
+    """
+    if not raw_script:
+        return ""
+    lines = []
+    for line in raw_script.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            lines.append("")
+            continue
+        if stripped.startswith("# ") and "Transcription" in stripped:
+            continue
+        if stripped.startswith("**Detected Language") or stripped.startswith(
+            "**Language Probability"
+        ):
+            continue
+        if stripped.startswith("## Transcription Content"):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()

@@ -49,6 +49,9 @@ temp/
 .env.local
 .env.production
 
+# litellm 网关凭据（含 Bearer token，勿入库；读取优先级：~/.config/opencode/ → 项目根）
+llm-config.json
+
 # Audio/Video files
 *.mp4
 *.avi

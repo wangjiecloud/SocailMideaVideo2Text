@@ -2,6 +2,7 @@
 
 Run: venv/bin/python -m unittest discover tests
 """
+
 import asyncio
 import json
 import logging
@@ -16,10 +17,24 @@ from pathlib import Path
 # main 在导入时读取 tasks.json，必须先把临时目录指过去，不能碰真实的 temp/
 _TEMP = tempfile.mkdtemp(prefix="transcriber-test-")
 os.environ["TRANSCRIBER_TEMP_DIR"] = _TEMP
-Path(_TEMP, "tasks.json").write_text(json.dumps({
-    "zombie": {"status": "processing", "progress": 80, "url": "https://example.com/v", "message": "正在生成摘要..."},
-    "done": {"status": "completed", "progress": 100, "url": "https://example.com/old"},
-}), encoding="utf-8")
+Path(_TEMP, "tasks.json").write_text(
+    json.dumps(
+        {
+            "zombie": {
+                "status": "processing",
+                "progress": 80,
+                "url": "https://example.com/v",
+                "message": "正在生成摘要...",
+            },
+            "done": {
+                "status": "completed",
+                "progress": 100,
+                "url": "https://example.com/old",
+            },
+        }
+    ),
+    encoding="utf-8",
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 logging.disable(logging.CRITICAL)
@@ -79,10 +94,16 @@ class DedupTests(unittest.TestCase):
         job.cancel()
 
     def submit(self, url=URL, model="model-a", language="zh"):
-        resp = self.client.post("/api/process-video", data={
-            "url": url, "summary_language": language, "model_id": model,
-            "api_key": "k", "model_base_url": "https://api.example.com/v1",
-        })
+        resp = self.client.post(
+            "/api/process-video",
+            data={
+                "url": url,
+                "summary_language": language,
+                "model_id": model,
+                "api_key": "k",
+                "model_base_url": "https://api.example.com/v1",
+            },
+        )
         self.assertEqual(resp.status_code, 200)
         return resp.json()["task_id"]
 
@@ -100,8 +121,12 @@ class DedupTests(unittest.TestCase):
         self.wait_until(lambda: self.started == [first])
 
     def test_finished_or_zombie_task_with_same_url_is_not_reused(self):
-        main.tasks["zombie"] = {"status": "processing", "progress": 80, "url": URL,
-                                "settings": main.task_settings("zh", "https://api.example.com/v1", "model-a")}
+        main.tasks["zombie"] = {
+            "status": "processing",
+            "progress": 80,
+            "url": URL,
+            "settings": main.task_settings("zh", "model-a"),
+        }
         new_id = self.submit()
         self.assertNotEqual(new_id, "zombie")
         self.wait_until(lambda: self.started == [new_id])
@@ -155,7 +180,9 @@ class ShutdownTests(unittest.TestCase):
         reader = threading.Thread(target=read_stream, daemon=True)
         reader.start()
         reader.join(timeout=5)
-        self.assertFalse(reader.is_alive(), "SSE stream for a finished task never closed")
+        self.assertFalse(
+            reader.is_alive(), "SSE stream for a finished task never closed"
+        )
         self.assertIn('"status": "completed"', result["body"])
 
     def test_shutdown_forces_exit_when_threads_linger(self):
@@ -176,7 +203,9 @@ class FrontendCacheTests(unittest.TestCase):
     def test_page_and_static_files_are_revalidated(self):
         with TestClient(main.app) as client:
             for path in ("/", "/static/app.js"):
-                self.assertEqual(client.get(path).headers.get("cache-control"), "no-cache", path)
+                self.assertEqual(
+                    client.get(path).headers.get("cache-control"), "no-cache", path
+                )
 
 
 if __name__ == "__main__":
