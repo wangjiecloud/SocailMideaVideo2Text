@@ -206,7 +206,7 @@ async def run(args) -> dict:
 
     vp = VideoProcessor()
     transcriber = Transcriber(model_size=args.whisper_model)
-    # LLM 默认走 litellm（ms.json/m.json 模型列表 + llm-config.json 凭据）；显式 --api-key/--base-url 优先
+    # LLM 默认走 litellm（ms.json 模型列表 + llm-config.json 凭据）；显式 --api-key/--base-url 优先
     llm_settings = resolve_llm_settings(
         model=args.model, api_key=args.api_key, base_url=args.base_url
     )
@@ -348,7 +348,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--base-url",
         default=None,
-        help="OpenAI 兼容地址，默认走 litellm（ms.json/m.json）或 OPENAI_BASE_URL",
+        help="OpenAI 兼容地址，默认走 litellm（ms.json）或 OPENAI_BASE_URL",
     )
     p.add_argument(
         "--model",

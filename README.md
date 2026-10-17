@@ -20,7 +20,7 @@ An AI-powered tool to transcribe, summarize, and archive videos and podcasts —
 - 🤖 **AI Text Optimization**: Automatic typo correction, sentence completion, and intelligent paragraphing
 - 🌍 **Multi-Language Summaries**: Generate intelligent summaries in 11 languages
 - ⚙️ **Conditional Translation**: Auto-translates the transcript when the summary language differs from the source language
-- 🔀 **litellm Model Selection**: The model dropdown in the UI reads from `~/.config/opencode/ms.json` — the same file lunwenAgent uses at runtime, so the list stays in sync (bundled `m.json` as fallback) — and connects through the litellm gateway using credentials from `llm-config.json` — pick a model and go, no manual API key entry
+- 🔀 **litellm Model Selection**: The model dropdown in the UI reads from `~/.config/opencode/ms.json` — the same file lunwenAgent uses at runtime, so the list stays in sync (project-root `ms.json` copy as fallback) — and connects through the litellm gateway using credentials from `llm-config.json` — pick a model and go, no manual API key entry
 - 📺 **Douyin Creator Batch Transcription**: Paste a creator page (`douyin.com/user/...`) and every video gets transcribed into one collection, each section headed by the video's publish time, with a single overall summary. Per-video failures are skipped, not fatal
 - 📡 **Live Progress**: Server-sent events stream real-time status, with a badge showing whether the job took the subtitle, Whisper, or Douyin-creator path
 - 📱 **Mobile-Friendly**: Responsive layout, dark UI
@@ -47,7 +47,7 @@ An AI-powered tool to transcribe, summarize, and archive videos and podcasts —
 - Python 3.8+
 - FFmpeg (required for yt-dlp audio extraction, merging downloaded video, and normalizing uploaded media)
 - LLM access, one of:
-  - **litellm gateway (default)** — the model list comes from `~/.config/opencode/ms.json` (the same file lunwenAgent reads at runtime; bundled `m.json` as fallback), credentials from `llm-config.json` (`~/.config/opencode/` first, then the project root). Nothing to type, just pick a model in the UI
+  - **litellm gateway (default)** — the model list comes from `~/.config/opencode/ms.json` (the same file lunwenAgent reads at runtime; project-root `ms.json` copy as fallback), credentials from `llm-config.json` (`~/.config/opencode/` first, then the project root). Nothing to type, just pick a model in the UI
   - Any OpenAI-compatible API key (OpenAI, OpenRouter, etc.) — via `OPENAI_API_KEY` or CLI flags; transcription-only `--no-llm` runs need neither
 
 ### Installation
@@ -163,7 +163,7 @@ python3 start.py --prod
 
 **3. (Optional) Pick an AI model**
 
-- The **Model** dropdown lists the chat models from `ms.json` (`~/.config/opencode/`, same source as lunwenAgent; bundled `m.json` as fallback) and connects through the litellm gateway (`llm-config.json` holds the credentials, so you never type an API key). The first entry is the server default
+- The **Model** dropdown lists the chat models from `ms.json` (`~/.config/opencode/`, same source as lunwenAgent; project-root `ms.json` copy as fallback) and connects through the litellm gateway (`llm-config.json` holds the credentials, so you never type an API key). The first entry is the server default
 - Advanced: CLI/agent users can still pass `--api-key` / `--base-url` for any OpenAI-compatible endpoint
 
 **4. Start processing** — click **Transcribe**. For **URL** jobs a badge shows the active mode:
@@ -209,7 +209,7 @@ Exit codes: `0` success, `2` bad input, `1` download/transcode failure.
 | `--whisper-model` | `tiny` … `large`, default `base` |
 | `--video-max-height` | Max resolution for the original video download, default `720` |
 | `--model` | Model ID or display name from the model list (e.g. `claude-sonnet-5`); default is the first entry |
-| `--api-key` / `--base-url` | Any OpenAI-compatible endpoint; defaults to litellm (`llm-config.json` + `ms.json`/`m.json`) |
+| `--api-key` / `--base-url` | Any OpenAI-compatible endpoint; defaults to litellm (`llm-config.json` + `ms.json`) |
 | `-o, --output-dir` | Where to write the Markdown, default `./temp` |
 | `--json` / `-q` | Machine-readable output / silence progress |
 
@@ -217,7 +217,7 @@ Exit codes: `0` success, `2` bad input, `1` download/transcode failure.
 
 By default the CLI connects through the **litellm gateway**: the model list
 comes from `~/.config/opencode/ms.json` (the same file lunwenAgent reads at
-runtime; bundled `m.json` as fallback — first entry = default), credentials from
+runtime; project-root `ms.json` copy as fallback — first entry = default), credentials from
 `llm-config.json` (`~/.config/opencode/` first, then the project root). Nothing
 to configure.
 
@@ -342,7 +342,7 @@ All endpoints are served from the same origin as the UI.
 | `GET` | `/api/download/{filename}` | Download a result as an attachment (`.md` or media). Optional `?name=` sets a friendly filename |
 | `GET` | `/api/media/{filename}` | Stream media inline for the player — supports HTTP Range, so seeking works |
 | `DELETE` | `/api/task/{task_id}` | Cancel a running job and drop its record |
-| `GET` | `/api/litellm/models` | Model list (from `ms.json`/`m.json`) for the UI dropdown (`[{id, name, base_url}]` + `default`) |
+| `GET` | `/api/litellm/models` | Model list (from `ms.json`) for the UI dropdown (`[{id, name, base_url}]` + `default`) |
 | `POST` | `/api/models` | Legacy proxy: list models from any OpenAI-compatible provider |
 | `GET` | `/api/tasks/active` | Active job counters (debugging) |
 
@@ -402,7 +402,7 @@ AI-Video-Transcriber/
 │   ├── transcriber.py      # Faster-Whisper transcription
 │   ├── summarizer.py       # Transcript optimization + summary
 │   ├── translator.py       # Conditional translation
-│   ├── model_registry.py   # litellm model list (ms.json/m.json) + credentials (llm-config.json)
+│   ├── model_registry.py   # litellm model list (ms.json) + credentials (llm-config.json)
 │   └── llm_sanitize.py     # Post-process LLM output (strip boilerplate)
 ├── static/
 │   ├── index.html          # UI markup + styles
@@ -413,7 +413,7 @@ AI-Video-Transcriber/
 ├── .env.example
 ├── requirements.txt
 ├── install.sh
-├── m.json                  # Fallback litellm model list (~/.config/opencode/ms.json is preferred)
+├── ms.json                 # Fallback litellm model list copy (~/.config/opencode/ms.json is preferred)
 ├── llm-config.json         # litellm gateway credentials (gitignored)
 ├── start.py                # Startup script (--prod disables hot reload)
 ├── transcribe.py           # Headless CLI (agents, scripts, cron)

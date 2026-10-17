@@ -20,7 +20,7 @@
 - 🤖 **AI 文本优化**：自动错别字修正、句子完整化和智能分段
 - 🌍 **多语言摘要**：支持 11 种语言的智能摘要生成
 - ⚙️ **条件式翻译**：当所选摘要语言与转录语言不一致时，自动生成翻译
-- 🔀 **litellm 模型选择**：页面中的模型下拉列表读取自 `~/.config/opencode/ms.json`（与 lunwenAgent 运行时同源，列表自动保持同步，项目内 `m.json` 兜底），凭据来自 `llm-config.json`，经 litellm 网关连接 —— 选个模型就能用，无需手动填写 API Key
+- 🔀 **litellm 模型选择**：页面中的模型下拉列表读取自 `~/.config/opencode/ms.json`（与 lunwenAgent 运行时同源，列表自动保持同步，项目根 `ms.json` 副本兜底），凭据来自 `llm-config.json`，经 litellm 网关连接 —— 选个模型就能用，无需手动填写 API Key
 - 📺 **抖音博主批量转录**：粘贴博主主页链接（`douyin.com/user/...`），全部视频转录为一份合集文稿，每节以视频发布时间开头，并生成一次整体摘要。单个视频失败会跳过，不会中断整批任务
 - 📡 **实时进度**：通过 SSE 推送实时状态，并用徽章标明本次走的是字幕、Whisper 还是抖音博主路径
 - 📱 **移动适配**：响应式布局，深色界面
@@ -47,7 +47,7 @@
 - Python 3.8+
 - FFmpeg（链接音频提取、原视频合流、本地上传转码均需）
 - LLM 访问能力，三选一：
-  - **litellm 网关（默认）**—— 模型列表来自 `~/.config/opencode/ms.json`（与 lunwenAgent 运行时同源；项目内 `m.json` 兜底），凭据从 `llm-config.json` 读取（优先 `~/.config/opencode/`，其次项目根目录）。无需任何输入，在页面选个模型即可
+  - **litellm 网关（默认）**—— 模型列表来自 `~/.config/opencode/ms.json`（与 lunwenAgent 运行时同源；项目根 `ms.json` 副本兜底），凭据从 `llm-config.json` 读取（优先 `~/.config/opencode/`，其次项目根目录）。无需任何输入，在页面选个模型即可
   - 任意 OpenAI 兼容服务商的 API Key（OpenAI、OpenRouter 等）—— 通过 `OPENAI_API_KEY` 环境变量或 CLI 参数指定
   - 都不需要：仅转录的 `--no-llm` 模式本地即可运行
 
@@ -164,7 +164,7 @@ python3 start.py --prod
 
 **3.（可选）选择 AI 模型**
 
-- **模型**下拉列表展示 `ms.json`（`~/.config/opencode/`，与 lunwenAgent 同源；项目内 `m.json` 兜底）中的 chat 模型，经 litellm 网关连接（凭据在 `llm-config.json` 中，全程无需输入 API Key），第一个条目即服务器默认模型
+- **模型**下拉列表展示 `ms.json`（`~/.config/opencode/`，与 lunwenAgent 同源；项目根 `ms.json` 副本兜底）中的 chat 模型，经 litellm 网关连接（凭据在 `llm-config.json` 中，全程无需输入 API Key），第一个条目即服务器默认模型
 - 进阶：CLI/agent 用户仍可传 `--api-key` / `--base-url` 接入任意 OpenAI 兼容端点
 
 **4. 开始处理** —— 点击 **Transcribe**。**链接任务**会显示当前模式徽章：
@@ -210,14 +210,14 @@ venv/bin/python transcribe.py notes.txt --no-llm          # 无需 API Key
 | `--whisper-model` | `tiny` … `large`，默认 `base` |
 | `--video-max-height` | 原视频下载清晰度上限，默认 `720` |
 | `--model` | 模型列表中的模型 ID 或显示名（如 `claude-sonnet-5`），默认取第一个条目 |
-| `--api-key` / `--base-url` | 任意 OpenAI 兼容端点；默认走 litellm（`llm-config.json` + `ms.json`/`m.json`） |
+| `--api-key` / `--base-url` | 任意 OpenAI 兼容端点；默认走 litellm（`llm-config.json` + `ms.json`） |
 | `-o, --output-dir` | Markdown 输出目录，默认 `./temp` |
 | `--json` / `-q` | 机器可读输出 / 静默进度 |
 
 #### Agent 的 AI 服务商配置
 
 CLI 默认经 **litellm 网关** 连接：模型列表来自 `~/.config/opencode/ms.json`
-（与 lunwenAgent 运行时同源；项目内 `m.json` 兜底，第一个条目为默认），
+（与 lunwenAgent 运行时同源；项目根 `ms.json` 副本兜底，第一个条目为默认），
 凭据来自 `llm-config.json`（优先 `~/.config/opencode/`，其次项目根目录），
 无需任何配置。
 
@@ -334,7 +334,7 @@ Claude Desktop 则把同样的 command 和 args 加到 Claude Desktop 的 MCP �
 | `GET` | `/api/download/{filename}` | 以附件形式下载结果（`.md` 或媒体文件），可选 `?name=` 指定友好文件名 |
 | `GET` | `/api/media/{filename}` | 内联播放媒体，支持 HTTP Range，可拖动进度条 |
 | `DELETE` | `/api/task/{task_id}` | 取消运行中的任务并删除记录 |
-| `GET` | `/api/litellm/models` | 返回模型列表（`ms.json`/`m.json`，页面下拉框用），含 `default` 默认模型 |
+| `GET` | `/api/litellm/models` | 返回模型列表（`ms.json`，页面下拉框用），含 `default` 默认模型 |
 | `POST` | `/api/models` | 旧版代理：拉取任意 OpenAI 兼容服务商的模型列表 |
 | `GET` | `/api/tasks/active` | 活跃任务计数（调试用） |
 
@@ -394,7 +394,7 @@ AI-Video-Transcriber/
 │   ├── transcriber.py      # Faster-Whisper 转录
 │   ├── summarizer.py       # 文稿优化 + 摘要
 │   ├── translator.py       # 条件式翻译
-│   ├── model_registry.py   # litellm 模型列表（ms.json/m.json）+ 凭据（llm-config.json）
+│   ├── model_registry.py   # litellm 模型列表（ms.json）+ 凭据（llm-config.json）
 │   └── llm_sanitize.py     # LLM 输出后处理（去除套话等）
 ├── static/
 │   ├── index.html          # 页面结构与样式
@@ -405,7 +405,7 @@ AI-Video-Transcriber/
 ├── .env.example
 ├── requirements.txt
 ├── install.sh
-├── m.json                  # 兜底 litellm 模型列表（优先读 ~/.config/opencode/ms.json）
+├── ms.json                 # 兜底 litellm 模型列表副本（优先读 ~/.config/opencode/ms.json）
 ├── llm-config.json         # litellm 网关凭据（已 gitignore）
 ├── start.py                # 启动脚本（--prod 禁用热重载）
 ├── transcribe.py           # 无头命令行入口（agent、脚本、定时任务）

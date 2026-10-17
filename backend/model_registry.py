@@ -2,10 +2,9 @@
 litellm 模型注册表。
 
 把「用哪个模型、用什么凭据、连哪个网关」三件事收敛到一个模块：
-- ms.json：模型列表（对象格式，~/.config/opencode/ms.json），与 lunwenAgent
-  运行时读取的是同一份 —— lunwenAgent 更新模型时本项目自动跟随；
-- m.json：兜底模型列表（数组格式，项目根维护，与 lunwenAgent 仓库根同格式），
-  ms.json 不可用或无有效条目时使用；
+- ms.json：模型列表（对象格式）。优先读 ~/.config/opencode/ms.json
+  （lunwenAgent 运行时读取的同一份，最新鲜，更新自动跟随）；
+  全局缺失或不可用时读项目根 ms.json（从全局拷贝维护，格式一致）；
 - llm-config.json：litellm 网关的 Bearer 凭据与用户名。
   优先读 ~/.config/opencode/llm-config.json（lunwenAgent 全局位置，最新鲜），
   fallback 到项目根目录。
@@ -33,13 +32,11 @@ _LLM_AUTH_CANDIDATES = [
     lambda root: root / "llm-config.json",
 ]
 
-# ms.json 候选位置：lunwenAgent 运行时真正读取的模型列表（对象格式）
+# ms.json 候选位置（按优先级）：lunwenAgent 全局位置（运行时同源）→ 项目根（拷贝维护）
 _MS_MODELS_CANDIDATES = [
     lambda root: Path(os.path.expanduser("~/.config/opencode/ms.json")),
+    lambda root: root / "ms.json",
 ]
-
-# m.json 固定放项目根（与 lunwenAgent/m.json 同格式，拷贝维护，作为兜底）
-_MODELS_FILE = "m.json"
 
 
 def project_root() -> Path:
@@ -99,60 +96,28 @@ def _entries_from_ms_json(path: Path) -> list[dict]:
     return entries
 
 
-def _entries_from_m_json(path: Path) -> list[dict]:
-    """解析 m.json（数组格式）。
-
-    过滤规则：roles 含 "chat" 且 provider 不是 vllm（vllm 条目是
-    lunwenAgent 的 autocomplete 专用，没有网关语义）。
-    """
-    data = json.loads(path.read_text(encoding="utf-8"))
-    entries = []
-    for item in data.get("models", []):
-        roles = item.get("roles") or []
-        provider = (item.get("provider") or "").lower()
-        if "chat" not in roles or provider == "vllm":
-            continue
-        base_url = (item.get("onPremProxyUrl") or "").strip().rstrip("/")
-        entries.append(
-            {
-                "name": (item.get("name") or item.get("model") or "").strip(),
-                "model": (item.get("model") or "").strip(),
-                "base_url": base_url or DEFAULT_LITELLM_BASE_URL,
-            }
-        )
-    return entries
-
-
 def load_model_entries() -> list[dict]:
-    """读取模型列表，返回可用的 chat 模型条目。
+    """读取模型列表，返回可用的条目。
 
-    优先 ~/.config/opencode/ms.json（lunwenAgent 运行时同源，对象格式），
-    不可用或无有效条目时回退项目根 m.json（数组格式）。
+    优先 ~/.config/opencode/ms.json（lunwenAgent 运行时同源，最新鲜），
+    全局缺失、损坏或无有效条目时回退项目根 ms.json（从全局拷贝维护）。
 
     每个条目: {"name": 显示名, "model": 模型 ID, "base_url": 网关地址}。
     两处都不可用时返回空列表。
     """
+    root = project_root()
     for make_path in _MS_MODELS_CANDIDATES:
-        path = make_path(None)
+        path = make_path(root)
         try:
             if not path.is_file():
                 continue
             entries = _entries_from_ms_json(path)
             if entries:
                 return entries
-            logger.warning(f"{path} 无可用条目，回退 {_MODELS_FILE}")
+            logger.warning(f"{path} 无可用条目，尝试下一个候选位置")
         except Exception as e:
-            logger.warning(f"读取 {path} 失败，回退 {_MODELS_FILE}: {e}")
-
-    path = project_root() / _MODELS_FILE
-    try:
-        return _entries_from_m_json(path)
-    except FileNotFoundError:
-        logger.warning(f"未找到 {_MODELS_FILE}（{path}），模型列表为空")
-        return []
-    except Exception as e:
-        logger.error(f"解析 {_MODELS_FILE} 失败: {e}")
-        return []
+            logger.warning(f"读取 {path} 失败，尝试下一个候选位置: {e}")
+    return []
 
 
 def resolve_model_entry(model_ref: Optional[str]) -> Optional[dict]:
@@ -169,7 +134,7 @@ def resolve_model_entry(model_ref: Optional[str]) -> Optional[dict]:
 
 
 def default_model_id() -> Optional[str]:
-    """默认模型：m.json 里第一个 chat 模型（列表维护方把它排在首选位置）。"""
+    """默认模型：模型列表第一个条目（列表维护方把它排在首选位置）。"""
     entries = load_model_entries()
     return entries[0]["model"] if entries else None
 

@@ -1,0 +1,688 @@
+{
+  "models": {
+    "claude-sonnet-5": {
+      "id": "claude-sonnet-5",
+      "providerID": "workspace",
+      "name": "Claude-5-Sonnet",
+      "api": {
+        "id": "claude-sonnet-5",
+        "url": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+        "npm": "@ai-sdk/openai-compatible"
+      },
+      "status": "active",
+      "headers": {},
+      "options": {},
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "limit": {
+        "context": 200000,
+        "output": 32768
+      },
+      "capabilities": {
+        "temperature": true,
+        "attachment": true,
+        "toolcall": true,
+        "input": {
+          "text": true,
+          "audio": false,
+          "image": true,
+          "video": false,
+          "pdf": true
+        },
+        "output": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "interleaved": false
+      },
+      "release_date": "2026-09-06",
+      "model_scope": "outer"
+    },
+    "claude-sonnet-4.6": {
+      "id": "claude-sonnet-4.6",
+      "providerID": "workspace",
+      "name": "Claude-4.6-Sonnet",
+      "api": {
+        "id": "claude-sonnet-4.6",
+        "url": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+        "npm": "@ai-sdk/openai-compatible"
+      },
+      "status": "active",
+      "headers": {},
+      "options": {},
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "limit": {
+        "context": 200000,
+        "output": 32768
+      },
+      "capabilities": {
+        "temperature": true,
+        "reasoning": true,
+        "attachment": true,
+        "toolcall": true,
+        "input": {
+          "text": true,
+          "audio": false,
+          "image": true,
+          "video": false,
+          "pdf": true
+        },
+        "output": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "interleaved": false
+      },
+      "release_date": "2026-09-06",
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "medium": {
+          "reasoningEffort": "medium"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        }
+      },
+      "model_scope": "outer"
+    },
+    "claude-haiku-4.5": {
+      "id": "claude-haiku-4.5",
+      "providerID": "workspace",
+      "name": "Claude-4.5-Haiku",
+      "api": {
+        "id": "claude-haiku-4.5",
+        "url": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+        "npm": "@ai-sdk/openai-compatible"
+      },
+      "status": "active",
+      "headers": {},
+      "options": {},
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "limit": {
+        "context": 200000,
+        "output": 32768
+      },
+      "capabilities": {
+        "temperature": true,
+        "reasoning": true,
+        "attachment": true,
+        "toolcall": true,
+        "input": {
+          "text": true,
+          "audio": false,
+          "image": true,
+          "video": false,
+          "pdf": true
+        },
+        "output": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "interleaved": false
+      },
+      "release_date": "2026-09-06",
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "medium": {
+          "reasoningEffort": "medium"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        }
+      },
+      "model_scope": "outer"
+    },
+    "qwen3.8-max": {
+      "id": "qwen3.8-max",
+      "providerID": "workspace",
+      "name": "Qwen3.8-Max",
+      "api": {
+        "id": "qwen3.8-max",
+        "url": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+        "npm": "@ai-sdk/openai-compatible"
+      },
+      "status": "active",
+      "headers": {},
+      "options": {},
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "limit": {
+        "context": 200000,
+        "output": 32768
+      },
+      "capabilities": {
+        "temperature": true,
+        "reasoning": true,
+        "attachment": true,
+        "toolcall": true,
+        "input": {
+          "text": true,
+          "audio": false,
+          "image": true,
+          "video": false,
+          "pdf": false
+        },
+        "output": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "interleaved": false
+      },
+      "release_date": "2026-09-06",
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "medium": {
+          "reasoningEffort": "medium"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        }
+      },
+      "model_scope": "outer"
+    },
+    "qwen3.7-plus": {
+      "id": "qwen3.7-plus",
+      "providerID": "workspace",
+      "name": "Qwen3.7-Plus",
+      "api": {
+        "id": "qwen3.7-plus",
+        "url": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+        "npm": "@ai-sdk/openai-compatible"
+      },
+      "status": "active",
+      "headers": {},
+      "options": {},
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "limit": {
+        "context": 200000,
+        "output": 32768
+      },
+      "capabilities": {
+        "temperature": true,
+        "reasoning": true,
+        "attachment": true,
+        "toolcall": true,
+        "input": {
+          "text": true,
+          "audio": false,
+          "image": true,
+          "video": false,
+          "pdf": false
+        },
+        "output": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "interleaved": false
+      },
+      "release_date": "2026-09-06",
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "medium": {
+          "reasoningEffort": "medium"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        }
+      },
+      "model_scope": "outer"
+    },
+    "gemini-3.1-pro-preview": {
+      "id": "gemini-3.1-pro-preview",
+      "providerID": "workspace",
+      "name": "Gemini-3.1-Pro-Preview",
+      "api": {
+        "id": "gemini-3.1-pro-preview",
+        "url": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+        "npm": "@ai-sdk/openai-compatible"
+      },
+      "status": "active",
+      "headers": {},
+      "options": {},
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "limit": {
+        "context": 200000,
+        "output": 32768
+      },
+      "capabilities": {
+        "temperature": true,
+        "reasoning": true,
+        "attachment": true,
+        "toolcall": true,
+        "input": {
+          "text": true,
+          "audio": false,
+          "image": true,
+          "video": false,
+          "pdf": true
+        },
+        "output": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "interleaved": false
+      },
+      "release_date": "2026-09-06",
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "medium": {
+          "reasoningEffort": "medium"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        }
+      },
+      "model_scope": "outer"
+    },
+    "gemini-3-flash-preview": {
+      "id": "gemini-3-flash-preview",
+      "providerID": "workspace",
+      "name": "Gemini-3-Flash-Preview",
+      "api": {
+        "id": "gemini-3-flash-preview",
+        "url": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+        "npm": "@ai-sdk/openai-compatible"
+      },
+      "status": "active",
+      "headers": {},
+      "options": {},
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "limit": {
+        "context": 200000,
+        "output": 32768
+      },
+      "capabilities": {
+        "temperature": true,
+        "reasoning": true,
+        "attachment": true,
+        "toolcall": true,
+        "input": {
+          "text": true,
+          "audio": false,
+          "image": true,
+          "video": false,
+          "pdf": true
+        },
+        "output": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "interleaved": false
+      },
+      "release_date": "2026-09-06",
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "medium": {
+          "reasoningEffort": "medium"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        }
+      },
+      "model_scope": "outer"
+    },
+    "gpt-5.4": {
+      "id": "gpt-5.4",
+      "providerID": "workspace",
+      "name": "GPT-5.4",
+      "api": {
+        "id": "gpt-5.4",
+        "url": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+        "npm": "@ai-sdk/openai-compatible"
+      },
+      "status": "active",
+      "headers": {},
+      "options": {},
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "limit": {
+        "context": 200000,
+        "output": 32768
+      },
+      "capabilities": {
+        "temperature": true,
+        "reasoning": true,
+        "attachment": true,
+        "toolcall": true,
+        "input": {
+          "text": true,
+          "audio": false,
+          "image": true,
+          "video": false,
+          "pdf": true
+        },
+        "output": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "interleaved": false
+      },
+      "release_date": "2026-09-06",
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "medium": {
+          "reasoningEffort": "medium"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        }
+      },
+      "model_scope": "outer"
+    },
+    "gpt-5.6-luna": {
+      "id": "gpt-5.6-luna",
+      "providerID": "workspace",
+      "name": "GPT-5.6-Luna",
+      "api": {
+        "id": "gpt-5.6-luna",
+        "url": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+        "npm": "@ai-sdk/openai-compatible"
+      },
+      "status": "active",
+      "headers": {},
+      "options": {},
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "limit": {
+        "context": 200000,
+        "output": 32768
+      },
+      "capabilities": {
+        "temperature": true,
+        "attachment": true,
+        "toolcall": true,
+        "input": {
+          "text": true,
+          "audio": false,
+          "image": true,
+          "video": false,
+          "pdf": true
+        },
+        "output": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "interleaved": false
+      },
+      "release_date": "2026-09-06",
+      "model_scope": "outer"
+    },
+    "aliyun-glm-5.2": {
+      "id": "aliyun-glm-5.2",
+      "providerID": "workspace",
+      "name": "Aliyun-GLM-5.2-Outer",
+      "api": {
+        "id": "aliyun-glm-5.2",
+        "url": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+        "npm": "@ai-sdk/openai-compatible"
+      },
+      "status": "active",
+      "headers": {},
+      "options": {},
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "limit": {
+        "context": 200000,
+        "output": 32768
+      },
+      "capabilities": {
+        "temperature": true,
+        "reasoning": true,
+        "attachment": false,
+        "toolcall": true,
+        "input": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "output": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "interleaved": false
+      },
+      "release_date": "2026-09-06",
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "medium": {
+          "reasoningEffort": "medium"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        }
+      },
+      "model_scope": "outer"
+    },
+    "hw-glm-5": {
+      "id": "hw-glm-5",
+      "providerID": "workspace",
+      "name": "HW-GLM-5.2",
+      "api": {
+        "id": "hw-glm-5",
+        "url": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+        "npm": "@ai-sdk/openai-compatible"
+      },
+      "status": "active",
+      "headers": {},
+      "options": {},
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "limit": {
+        "context": 200000,
+        "output": 32768
+      },
+      "capabilities": {
+        "temperature": true,
+        "reasoning": true,
+        "attachment": false,
+        "toolcall": true,
+        "input": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "output": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "interleaved": false
+      },
+      "release_date": "2026-09-06",
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "medium": {
+          "reasoningEffort": "medium"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        }
+      },
+      "model_scope": "inner"
+    },
+    "deepseek_v4": {
+      "id": "deepseek_v4",
+      "providerID": "workspace",
+      "name": "Deepseek-v4-pro",
+      "api": {
+        "id": "deepseek_v4",
+        "url": "https://apiprod.midea.com/llm/f-devops-python-litellm/v1",
+        "npm": "@ai-sdk/openai-compatible"
+      },
+      "status": "active",
+      "headers": {},
+      "options": {},
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "limit": {
+        "context": 200000,
+        "output": 32768
+      },
+      "capabilities": {
+        "temperature": true,
+        "reasoning": true,
+        "attachment": false,
+        "toolcall": true,
+        "input": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "output": {
+          "text": true,
+          "audio": false,
+          "image": false,
+          "video": false,
+          "pdf": false
+        },
+        "interleaved": false
+      },
+      "release_date": "2026-09-06",
+      "variants": {
+        "low": {
+          "reasoningEffort": "low"
+        },
+        "medium": {
+          "reasoningEffort": "medium"
+        },
+        "high": {
+          "reasoningEffort": "high"
+        }
+      },
+      "model_scope": "inner"
+    }
+  }
+}

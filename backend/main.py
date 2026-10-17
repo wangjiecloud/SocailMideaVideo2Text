@@ -100,7 +100,7 @@ TEMP_DIR.mkdir(exist_ok=True)
 # 初始化处理器
 video_processor = VideoProcessor()
 transcriber = Transcriber()
-# LLM 默认走 litellm（m.json 模型列表 + llm-config.json 凭据），配置缺失时回退环境变量
+# LLM 默认走 litellm（ms.json 模型列表 + llm-config.json 凭据），配置缺失时回退环境变量
 summarizer = Summarizer(**model_registry.resolve_llm_settings())
 translator = Translator(**model_registry.resolve_llm_settings())
 
@@ -193,7 +193,7 @@ SUPERSEDED_MESSAGE = "已被同一链接的新任务（不同模型或摘要语�
 def task_settings(summary_language: str, model_id: str) -> dict:
     """决定处理结果的设置；同一链接只有这些都相同时才复用正在跑的任务。
 
-    模型网关地址由 model_id 经 m.json 解析得出，不参与比较。
+    模型网关地址由 model_id 经 ms.json 解析得出，不参与比较。
     """
     return {
         "summary_language": (summary_language or "").strip(),
@@ -553,7 +553,7 @@ async def read_root():
 
 @app.get("/api/litellm/models")
 async def litellm_models():
-    """返回 m.json 中的模型列表（与 lunwenAgent 共用同一份配置）。"""
+    """返回 ms.json 中的模型列表（与 lunwenAgent 运行时共用同一份配置）。"""
     entries = model_registry.load_model_entries()
     default_model = model_registry.default_model_id()
     return {
@@ -803,7 +803,7 @@ async def process_video_task(
                 )
             )
 
-        # 用户选了模型或提供了凭据：按 m.json/litellm 解析后创建请求级 Summarizer
+        # 用户选了模型或提供了凭据：按 ms.json/litellm 解析后创建请求级 Summarizer
         request_llm = model_registry.resolve_llm_settings(
             model=model_id, api_key=api_key, base_url=model_base_url
         )

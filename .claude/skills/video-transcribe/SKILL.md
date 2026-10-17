@@ -41,7 +41,8 @@ Useful flags:
 
 The LLM steps default to the litellm gateway: models come from
 `~/.config/opencode/ms.json` (the same file lunwenAgent reads at runtime, so it
-stays in sync) with the bundled `m.json` as fallback, and credentials from
+stays in sync) with the project-root `ms.json` copy as fallback, and credentials
+from
 `llm-config.json` (repo root, gitignored; the global copy at
 `~/.config/opencode/llm-config.json` wins). Alternatively set `OPENAI_API_KEY`
 (and optionally `OPENAI_BASE_URL`). Without either the pipeline still transcribes
