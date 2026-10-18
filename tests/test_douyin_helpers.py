@@ -82,5 +82,51 @@ class StripTranscriptMetaTest(unittest.TestCase):
         self.assertEqual(pl.strip_transcript_meta(None), "")
 
 
+class MergeTranscriptTextTest(unittest.TestCase):
+    RAW = (
+        "# Video Transcription\n"
+        "\n"
+        "**Detected Language:** zh\n"
+        "**Language Probability:** 0.98\n"
+        "\n"
+        "## Transcription Content\n"
+        "\n"
+        "**[00:00 - 00:02]**\n"
+        "\n"
+        "第一句。\n"
+        "\n"
+        "**[00:02 - 00:04]**\n"
+        "\n"
+        "第二句。\n"
+    )
+
+    def test_merges_into_single_paragraph(self):
+        out = pl.merge_transcript_text(self.RAW)
+        self.assertNotIn("**[", out)
+        self.assertNotIn("Detected Language", out)
+        self.assertNotIn("#", out)
+        # 中文相邻直接拼接，不加空格
+        self.assertEqual(out, "第一句。第二句。")
+
+    def test_english_pieces_joined_with_space(self):
+        raw = (
+            "## Transcription Content\n"
+            "\n"
+            "**[00:00 - 00:02]**\n"
+            "\n"
+            "Hello world.\n"
+            "\n"
+            "**[00:02 - 00:04]**\n"
+            "\n"
+            "Second line.\n"
+        )
+        self.assertEqual(pl.merge_transcript_text(raw), "Hello world. Second line.")
+
+    def test_empty_and_marker_only_input(self):
+        self.assertEqual(pl.merge_transcript_text(""), "")
+        self.assertEqual(pl.merge_transcript_text(None), "")
+        self.assertEqual(pl.merge_transcript_text("**[00:00 - 00:01]**\n\n"), "")
+
+
 if __name__ == "__main__":
     unittest.main()

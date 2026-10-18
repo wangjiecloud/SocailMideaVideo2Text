@@ -346,17 +346,17 @@ class ChannelProcessorTest(unittest.IsolatedAsyncioTestCase):
             calls["n"] += 1
             if calls["n"] == 1:
                 raise Exception("偶发失败")
-            return "重试后的脚本", "zh"
+            return "重试后的脚本", "zh", "direct"
 
         processor._process_video_once = flaky_once
         work_dir = self.work_root / "retry_dir"
         work_dir.mkdir()
 
-        script, lang = await processor._transcribe_one(
+        script, lang, source = await processor._transcribe_one(
             {"id": "1", "title": "标题"}, 1, work_dir, ""
         )
         self.assertEqual(calls["n"], 2)
-        self.assertEqual((script, lang), ("重试后的脚本", "zh"))
+        self.assertEqual((script, lang, source), ("重试后的脚本", "zh", "direct"))
 
     async def test_transcribe_one_raises_after_attempts(self):
         processor = ChannelProcessor(FakeVideoProcessor(), FakeTranscriber([]))
@@ -371,6 +371,77 @@ class ChannelProcessorTest(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(Exception, "下载/转录失败: 永久失败"):
             await processor._transcribe_one({"id": "1", "title": "t"}, 1, work_dir, "")
+
+    async def test_on_log_reports_per_video_results(self):
+        """on_log 回调逐视频推送来源与结果，供页面实时展示。"""
+        vp = FakeVideoProcessor()
+        transcriber = FakeTranscriber([_raw_script("第一段"), _raw_script("第二段")])
+        processor = ChannelProcessor(vp, transcriber)
+        logs = []
+
+        async def on_log(line):
+            logs.append(line)
+
+        with (
+            self._patch_fetch(),
+            self._patch_cookie(),
+            self._patch_media(),
+        ):
+            await processor.process_creator(
+                url="https://www.douyin.com/user/MS4wLjABAAAAfake",
+                summarizer=FakeSummarizer(),
+                summary_language="zh",
+                work_dir=self.work_root,
+                on_log=on_log,
+            )
+
+        self.assertTrue(any("共 2 个视频" in line for line in logs))
+        self.assertEqual(sum("转录成功" in line for line in logs), 2)
+        # 默认链路经分享页直链下载，日志里标注来源
+        self.assertEqual(sum("分享页直链+Whisper" in line for line in logs), 2)
+        # 每条成功日志都带 [i/2] 进度前缀
+        import re as _re
+
+        self.assertTrue(
+            all(_re.search(r"\[\d+/2\]", line) for line in logs if "转录成功" in line)
+        )
+
+    async def test_section_body_merged_into_paragraph(self):
+        """同一视频（同一日期小节）的正文合并为整段，不再按时间戳切分。"""
+        vp = FakeVideoProcessor()
+        raw = (
+            "# Video Transcription\n"
+            "\n"
+            "**Detected Language:** zh\n"
+            "**Language Probability:** 0.98\n"
+            "\n"
+            "## Transcription Content\n"
+            "\n"
+            "**[00:00 - 00:02]**\n"
+            "\n"
+            "第一句。\n"
+            "\n"
+            "**[00:02 - 00:04]**\n"
+            "\n"
+            "第二句。\n"
+        )
+        transcriber = FakeTranscriber([raw])
+        processor = ChannelProcessor(vp, transcriber)
+
+        with (
+            self._patch_fetch(videos=[VIDEOS[0]]),
+            self._patch_cookie(),
+            self._patch_media(),
+        ):
+            result = await processor.process_creator(
+                url="https://www.douyin.com/user/MS4wLjABAAAAfake",
+                summarizer=FakeSummarizer(),
+                summary_language="zh",
+                work_dir=self.work_root,
+            )
+
+        self.assertNotIn("**[", result["script"])
+        self.assertIn("第一句。第二句。", result["script"])
 
     async def test_no_llm_skips_summary(self):
         vp = FakeVideoProcessor()
@@ -571,7 +642,9 @@ class ChannelProcessorTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIn("JSON 字幕一", result["script"])
-        self.assertIn("[00:00 - 00:02]", result["script"])
+        # 同一视频的字幕条目合并为整段，不再保留时间戳
+        self.assertIn("JSON 字幕一JSON 字幕二", result["script"])
+        self.assertNotIn("**[", result["script"])
         self.assertEqual(self.media.download_calls, [])
 
     async def test_caption_failure_falls_back_to_share(self):

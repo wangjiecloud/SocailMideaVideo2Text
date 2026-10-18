@@ -422,6 +422,7 @@ def _collect_post_videos(
     nickname = ""
     cursor = 0
     first_page = True
+    prev_has_more = False
 
     while len(videos) < limit:
         data = fetch_json(cursor)
@@ -449,6 +450,14 @@ def _collect_post_videos(
             first_page = False
 
         if not aweme_list:
+            if prev_has_more:
+                # 上一页明确说还有更多，本页却空了：典型的匿名访问截断，
+                # 不告警的话用户只会看到「解析到 N 个视频」而不知原因
+                logger.warning(
+                    f"抖音 post API 上一页 has_more=1 但本页返回空列表，"
+                    f"疑似未登录被截断（仅解析到 {len(videos)} 个视频）："
+                    "请配置 DOUYIN_COOKIE（浏览器登录后的 Cookie 字符串）后重试"
+                )
             break
 
         for raw in aweme_list:
@@ -461,6 +470,7 @@ def _collect_post_videos(
         next_cursor = data.get("max_cursor")
         if not has_more or next_cursor is None or next_cursor == cursor:
             break
+        prev_has_more = True
         cursor = next_cursor
 
     return nickname, videos

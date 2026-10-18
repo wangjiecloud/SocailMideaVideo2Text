@@ -58,9 +58,21 @@ from douyin import (
     fetch_share_video_info,
     fetch_text,
 )
-from pipeline import format_subtitle_markdown, strip_transcript_meta, transcribed_speech
+from pipeline import (
+    format_subtitle_markdown,
+    merge_transcript_text,
+    transcribed_speech,
+)
 
 logger = logging.getLogger(__name__)
+
+# 单视频转录来源 → 页面日志里展示的标签
+SOURCE_LABELS = {
+    "caption": "cla_info字幕",
+    "direct": "低码率直链+Whisper",
+    "share": "分享页直链+Whisper",
+    "ytdlp": "yt-dlp+Whisper",
+}
 
 
 class _ShareImagePost(Exception):
@@ -100,6 +112,7 @@ class ChannelProcessor:
         pause_check: Optional[Callable] = None,
         on_video_record: Optional[Callable] = None,
         on_list: Optional[Callable] = None,
+        on_log: Optional[Callable] = None,
     ) -> dict:
         """批量转录一个抖音博主的全部视频。
 
@@ -121,6 +134,8 @@ class ChannelProcessor:
                 调用方据此持久化续转进度
             on_list: 拿到视频列表后回调 (nickname, total)，调用方可提前落盘
                 列表信息（服务重启后未完成任务面板仍能显示 N/M 进度）
+            on_log: 实时日志回调 (line:str)，同步或协程函数均可；逐视频的
+                开始/结果/失败原因等细节通过它推到页面
 
         Returns:
             见模块 docstring 的结果字段；所有视频都失败时抛异常。
@@ -144,6 +159,9 @@ class ChannelProcessor:
             on_progress,
             8,
             f"博主「{nickname or '未知'}」共 {total} 个视频，开始逐个转录...",
+        )
+        await self._notify(
+            on_log, f"博主「{nickname or '未知'}」共 {total} 个视频，开始逐个转录"
         )
 
         # 独占子目录：无论成功、失败还是取消，finally 里整体清理
@@ -179,6 +197,9 @@ class ChannelProcessor:
                 8,
                 f"检测到未完成的合集进度，已续转 {len(resumed)} 个视频，继续处理剩余视频...",
             )
+            await self._notify(
+                on_log, f"检测到断点进度，复用 {len(resumed)} 个已完成的视频"
+            )
 
         paused = False
         try:
@@ -209,10 +230,15 @@ class ChannelProcessor:
                 )
 
                 record = None
+                source = ""
                 # 图文作品没有音轨，跳过转录但保留小节占位，保证时间线完整
                 if video.get("is_image"):
                     image_count += 1
                     logger.info(f"第 {index}/{total} 个视频为图文作品，跳过转录")
+                    await self._notify(
+                        on_log,
+                        f"[{index}/{total}] 图文作品，跳过：{display_title[:50]}",
+                    )
                     record = {
                         "id": vid,
                         "status": "image",
@@ -227,7 +253,7 @@ class ChannelProcessor:
                     }
                 else:
                     try:
-                        raw_script, lang = await self._transcribe_one(
+                        raw_script, lang, source = await self._transcribe_one(
                             video, index, owned_dir, cookie
                         )
                     except asyncio.CancelledError:
@@ -237,6 +263,10 @@ class ChannelProcessor:
                         image_count += 1
                         logger.info(
                             f"第 {index}/{total} 个视频经分享页确认为图文作品，跳过转录"
+                        )
+                        await self._notify(
+                            on_log,
+                            f"[{index}/{total}] 经分享页确认为图文作品，跳过：{display_title[:50]}",
                         )
                         record = {
                             "id": vid,
@@ -253,6 +283,10 @@ class ChannelProcessor:
                     except Exception as e:
                         logger.warning(
                             f"第 {index} 个视频「{display_title}」处理失败: {e}"
+                        )
+                        await self._notify(
+                            on_log,
+                            f"[{index}/{total}] 失败：{display_title[:50]} — {str(e)[:120]}",
                         )
                         failed.append(
                             {
@@ -280,11 +314,19 @@ class ChannelProcessor:
                             no_speech_count += 1
                             body = "_该视频未检测到语音，无转录内容_"
                             logger.info(f"第 {index}/{total} 个视频未检测到语音")
+                            await self._notify(
+                                on_log,
+                                f"[{index}/{total}] 未检测到语音：{display_title[:50]}",
+                            )
                             status = "no_speech"
                         else:
                             ok_count += 1
-                            body = strip_transcript_meta(raw_script)
+                            body = merge_transcript_text(raw_script)
                             status = "ok"
+                            await self._notify(
+                                on_log,
+                                f"[{index}/{total}] 转录成功（{SOURCE_LABELS.get(source, source)}）：{display_title[:50]}",
+                            )
                         record = {
                             "id": vid,
                             "status": status,
@@ -386,12 +428,14 @@ class ChannelProcessor:
 
     async def _transcribe_one(
         self, video: dict, index: int, work_dir: Path, cookie: str
-    ) -> tuple[str, str]:
-        """处理单个视频，返回 (原始转录 Markdown, 语言代码)；失败抛异常。
+    ) -> tuple[str, str, str]:
+        """处理单个视频，返回 (原始转录 Markdown, 语言代码, 来源)；失败抛异常。
 
         语言代码：字幕路径取 caption_lang，音频路径取 Whisper 检测结果——
         不能在调用方读 transcriber.last_detected_language，字幕路径不经过
         transcriber，读到的是上一个视频的残留值。
+        来源：caption/direct/share/ytdlp（SOURCE_LABELS 的键），用于页面日志
+        展示这条转录走的是哪条链路。
         音频/字幕临时文件在 finally 里按 stem 前缀清理，避免几百个视频的
         博主把磁盘吃满。
         """
@@ -421,22 +465,27 @@ class ChannelProcessor:
 
     async def _process_video_once(
         self, video: dict, work_dir: Path, stem: str, cookie: str
-    ) -> tuple[str, str]:
-        """单视频处理链的一次完整尝试：字幕 → 低码率直链 → 分享页 → yt-dlp。"""
+    ) -> tuple[str, str, str]:
+        """单视频处理链的一次完整尝试：字幕 → 低码率直链 → 分享页 → yt-dlp。
+
+        返回 (原始转录 Markdown, 语言代码, 来源)。
+        """
         # 1) cla_info 字幕优先：能直接拿文本就不下载音频
         caption_result = await self._fetch_caption_markdown(
             video, work_dir, stem, cookie
         )
         if caption_result is not None:
-            return caption_result
+            script, lang = caption_result
+            return script, lang, "caption"
 
         # 2) 列表接口给的低码率 CDN 直链（约 6 小时时效，列表解析后立刻用没问题）
         low_gear_url = (video.get("low_gear_url") or "").strip()
         if low_gear_url:
             try:
-                return await self._download_and_transcribe(
+                script, lang = await self._download_and_transcribe(
                     low_gear_url, work_dir, stem, cookie
                 )
+                return script, lang, "direct"
             except asyncio.CancelledError:
                 raise
             except _TranscribeFailed:
@@ -460,9 +509,10 @@ class ChannelProcessor:
                 raise _ShareImagePost(video["id"])
             for play_url in share.get("play_urls") or []:
                 try:
-                    return await self._download_and_transcribe(
+                    script, lang = await self._download_and_transcribe(
                         play_url, work_dir, stem, cookie
                     )
+                    return script, lang, "share"
                 except asyncio.CancelledError:
                     raise
                 except _TranscribeFailed:
@@ -477,7 +527,7 @@ class ChannelProcessor:
         )
         script = await self.transcriber.transcribe(audio_path)
         lang = (getattr(self.transcriber, "last_detected_language", None) or "").strip()
-        return script, lang
+        return script, lang, "ytdlp"
 
     async def _fetch_caption_markdown(
         self, video: dict, work_dir: Path, stem: str, cookie: str
@@ -630,5 +680,14 @@ class ChannelProcessor:
         if on_progress is None:
             return
         result = on_progress(progress, message)
+        if asyncio.iscoroutine(result):
+            await result
+
+    @staticmethod
+    async def _notify(on_log, line: str) -> None:
+        """推送实时日志；回调可以是同步函数或协程函数，None 表示不推送。"""
+        if on_log is None:
+            return
+        result = on_log(line)
         if asyncio.iscoroutine(result):
             await result

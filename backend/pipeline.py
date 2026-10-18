@@ -170,3 +170,45 @@ def strip_transcript_meta(raw_script: str) -> str:
             continue
         lines.append(line)
     return "\n".join(lines).strip()
+
+
+# CJK 字符（汉字/假名/谚文）：相邻片段任一侧是 CJK 时直接拼接，不加空格
+_CJK_CHAR_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+
+
+def merge_transcript_text(raw_script: str) -> str:
+    """去掉元信息与时间戳，把转录正文合并为一个整段。
+
+    博主合集的每个视频小节不再按时间戳切分，同一视频（同一日期小节）的
+    内容直接拼成一段连续文本，便于阅读与检索；字幕与 Whisper 两种来源的
+    输出结构一致，无需区分处理。
+    """
+    if not raw_script:
+        return ""
+    pieces: list[str] = []
+    for line in raw_script.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # 时间戳标记（**[00:00 - 00:03]**）与元信息行都不算正文
+        if stripped.startswith("**[") and stripped.endswith("]**"):
+            continue
+        if stripped.startswith("#"):
+            continue
+        if stripped.startswith("**Detected Language") or stripped.startswith(
+            "**Language Probability"
+        ):
+            continue
+        if stripped == "(empty)":
+            continue
+        pieces.append(stripped)
+
+    if not pieces:
+        return ""
+    merged = pieces[0]
+    for piece in pieces[1:]:
+        if _CJK_CHAR_RE.match(merged[-1]) or _CJK_CHAR_RE.match(piece[0]):
+            merged += piece
+        else:
+            merged += " " + piece
+    return merged

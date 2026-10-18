@@ -3,12 +3,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import os
+from pathlib import Path
+
+# 加载项目根目录的 .env（backend/ 子目录启动时 start.py 的 load_dotenv 不会覆盖这里）
+try:
+    from dotenv import load_dotenv as _load_dotenv
+
+    _load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
+except Exception:
+    pass
+
 import asyncio
 import logging
 import threading
 import time
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Optional
 import aiofiles
 import uuid
@@ -101,7 +110,7 @@ TEMP_DIR.mkdir(exist_ok=True)
 
 # 初始化处理器
 video_processor = VideoProcessor()
-transcriber = Transcriber()
+transcriber = Transcriber(model_size=os.getenv("WHISPER_MODEL_SIZE", "base"))
 # LLM 默认走 litellm（ms.json 模型列表 + llm-config.json 凭据），配置缺失时回退环境变量
 summarizer = Summarizer(**model_registry.resolve_llm_settings())
 translator = Translator(**model_registry.resolve_llm_settings())
@@ -199,6 +208,30 @@ processing_urls = set()
 active_tasks = {}
 # 存储SSE连接，用于实时推送状态更新
 sse_connections = {}
+
+# 任务的实时日志（内存态，不落盘）：task_id → [line, ...]
+# 转换过程中的逐视频结果/失败原因通过 SSE 推到页面，重连时随首条消息回放
+task_logs = {}
+# 单任务缓存的日志行数上限，防止超长任务把内存和页面撑爆
+MAX_TASK_LOG_LINES = 500
+
+
+async def broadcast_task_log(task_id: str, line: str) -> None:
+    """缓存并推送一条任务实时日志到所有 SSE 订阅者。"""
+    logs = task_logs.setdefault(task_id, [])
+    logs.append(line)
+    if len(logs) > MAX_TASK_LOG_LINES:
+        del logs[: len(logs) - MAX_TASK_LOG_LINES]
+
+    if task_id not in sse_connections:
+        return
+    payload = json.dumps({"type": "log", "line": line}, ensure_ascii=False)
+    for queue in list(sse_connections[task_id]):
+        try:
+            await queue.put(payload)
+        except Exception as e:
+            logger.warning(f"发送日志到队列失败: {e}")
+
 
 SUPERSEDED_MESSAGE = "已被同一链接的新任务（不同模型或摘要语言）取代"
 
@@ -982,6 +1015,9 @@ async def process_channel_task(
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
 
+        async def on_log(line: str) -> None:
+            await broadcast_task_log(task_id, line)
+
         def on_list(nickname: str, total: int) -> None:
             """拿到列表就落盘：服务此时被杀，未完成面板仍能显示 N/M 进度。"""
             if not sec_uid:
@@ -1025,6 +1061,7 @@ async def process_channel_task(
             pause_check=pause_check,
             on_video_record=on_video_record,
             on_list=on_list,
+            on_log=on_log,
         )
 
         # 请求暂停：已完成的小节都在进度文件里，任务标记为 paused 等待续转
@@ -1285,8 +1322,11 @@ async def task_stream(task_id: str):
         sse_connections[task_id].append(queue)
 
         try:
-            # 立即发送当前状态
-            current_task = tasks.get(task_id, {})
+            # 立即发送当前状态；带上有缓存的实时日志，页面重连时能回放
+            current_task = dict(tasks.get(task_id, {}))
+            cached_logs = task_logs.get(task_id)
+            if cached_logs:
+                current_task["logs"] = list(cached_logs)
             yield f"data: {json.dumps(current_task, ensure_ascii=False)}\n\n"
             # 任务已结束就不再挂着连接，否则这条流永远不会关闭
             if current_task.get("status") in ["completed", "error"]:
@@ -1416,6 +1456,7 @@ async def delete_task(task_id: str):
 
     # 删除任务记录
     del tasks[task_id]
+    task_logs.pop(task_id, None)
     save_tasks(tasks)
     return {"message": "任务已取消并删除"}
 

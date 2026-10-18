@@ -490,6 +490,40 @@
     }
     .prog-msg { font-size: 12px; color: var(--text-dim); font-style: italic; }
 
+    /* 实时处理日志：转换过程中的逐视频结果/失败原因在此滚动展示 */
+    .task-log-panel {
+      display: none;
+      margin-top: 14px;
+      border: 1px solid var(--surface-3);
+      border-radius: 8px;
+      background: var(--surface-2, rgba(255,255,255,.02));
+      overflow: hidden;
+    }
+    .task-log-panel.show { display: block; }
+    .task-log-head {
+      padding: 7px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--surface-3);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .task-log-body {
+      max-height: 220px;
+      overflow-y: auto;
+      padding: 8px 12px;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      line-height: 1.7;
+    }
+    .task-log-line { color: var(--text-dim); white-space: pre-wrap; word-break: break-all; }
+    .task-log-line.ok { color: var(--success); }
+    .task-log-line.err { color: #f87171; }
+    .task-log-line.warn { color: #fbbf24; }
+
     /* 暂停按钮：仅博主合集任务显示 */
     .btn-pause {
       display: none;
@@ -941,6 +975,14 @@
         <div class="prog-fill" id="progressFill"></div>
       </div>
       <div class="prog-msg" id="progressMessage" data-i18n="preparing">Preparing…</div>
+      <!-- 实时处理日志：逐视频的成功/失败/跳过等细节实时滚动展示 -->
+      <div class="task-log-panel" id="taskLogPanel">
+        <div class="task-log-head">
+          <i class="fas fa-terminal"></i>
+          <span data-i18n="processing_log">Processing log</span>
+        </div>
+        <div class="task-log-body" id="taskLogBody"></div>
+      </div>
       <!-- 暂停：仅博主合集任务显示；不打断进行中的视频，当前视频完成后生效 -->
       <button type="button" id="pauseBtn" class="btn-pause">
         <i class="fas fa-pause"></i>
@@ -1021,6 +1063,6 @@
   </div>
 </main>
 
-  <script src="/static/app.js?v=20261018a"></script>
+  <script src="/static/app.js?v=20261018b"></script>
 </body>
 </html>

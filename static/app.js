@@ -73,14 +73,15 @@ class VideoTranscriber {
           channel_parsing:         'Parsing creator page…',
           channel_transcribing:    (i, n) => `Transcribing video ${i}/${n}…`,
           channel_no_speech_notice:'None of this creator\'s videos contain detectable speech, so there is nothing to transcribe and the summary is skipped.',
-          pause_task:              'Pause',
-          pause_requested:         'Pausing after the current video…',
-          paused_notice:           (d, t) => `Paused — ${d}/${t} videos done. Resume it from “Unfinished creator tasks” below.`,
-          unfinished_title:        'Unfinished creator tasks',
-          resume_task:             'Resume',
-          delete_task:             'Delete',
-          uf_progress:             (d, t) => `${d}/${t} videos`,
-          uf_progress_saved:       'progress saved',
+           pause_task:              'Pause',
+           pause_requested:         'Pausing after the current video…',
+           paused_notice:           (d, t) => `Paused — ${d}/${t} videos done. Resume it from “Unfinished creator tasks” below.`,
+           unfinished_title:        'Unfinished creator tasks',
+           resume_task:             'Resume',
+           delete_task:             'Delete',
+           uf_progress:             (d, t) => `${d}/${t} videos`,
+           uf_progress_saved:       'progress saved',
+           processing_log:          'Processing log',
       },
       zh: {
         title:                   'AI 视频转录器',
@@ -147,6 +148,7 @@ class VideoTranscriber {
           delete_task:             '删除',
           uf_progress:             (d, t) => `${d}/${t} 个视频`,
           uf_progress_saved:       '进度已保存',
+          processing_log:          '处理日志',
       }
     };
 
@@ -192,6 +194,8 @@ class VideoTranscriber {
     this.pauseBtn           = document.getElementById('pauseBtn');
     this.unfinishedPanel    = document.getElementById('unfinishedPanel');
     this.unfinishedList     = document.getElementById('unfinishedList');
+    this.taskLogPanel       = document.getElementById('taskLogPanel');
+    this.taskLogBody        = document.getElementById('taskLogBody');
     this.tabBtns            = document.querySelectorAll('.tab-btn');
     this.tabItems           = document.querySelectorAll('.tab-item');
     this.tabPanes           = document.querySelectorAll('.tab-pane');
@@ -498,6 +502,10 @@ class VideoTranscriber {
       try {
         const task = JSON.parse(ev.data);
         if (task.type === 'heartbeat') return;
+        // 实时日志事件：逐视频的成功/失败/跳过等细节，直接滚动追加
+        if (task.type === 'log') { this._appendLog(task.line); return; }
+        // 首条状态消息可能带缓存的日志（页面刷新/重连时回放）
+        if (Array.isArray(task.logs) && task.logs.length) this._replayLogs(task.logs);
 
         this._updateProgress(task.progress, task.message, true);
 
@@ -894,11 +902,48 @@ class VideoTranscriber {
     this.resultsPanel.classList.remove('show');
     this.progressPanel.classList.add('show');
     this._clearMedia();
+    this._resetLogPanel();
     // Reset mode badge & progress bar color for new task
     if (this.modeBadge) { this.modeBadge.style.display = 'none'; this.modeBadge.className = 'mode-badge'; }
     if (this.progressFill) this.progressFill.classList.remove('subtitle-mode');
   }
   _hideProgress() { this.progressPanel.classList.remove('show'); }
+
+  /* ── Live processing log ──────────────────────────────── */
+  _resetLogPanel() {
+    this._logReplayed = false;
+    if (this.taskLogBody) this.taskLogBody.innerHTML = '';
+    if (this.taskLogPanel) this.taskLogPanel.classList.remove('show');
+  }
+
+  _logLineClass(line) {
+    if (/失败|error/i.test(line)) return 'err';
+    if (/成功|完成/.test(line)) return 'ok';
+    if (/未检测到语音|跳过|复用|暂停/.test(line)) return 'warn';
+    return '';
+  }
+
+  _appendLog(line) {
+    if (!this.taskLogPanel || !this.taskLogBody) return;
+    const body = this.taskLogBody;
+    // 用户没滚到底部时不强行拽回，避免打断回看
+    const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+    const el = document.createElement('div');
+    el.className = `task-log-line ${this._logLineClass(line)}`.trim();
+    el.textContent = line;
+    body.appendChild(el);
+    // DOM 行数上限，超长任务避免把页面撑爆
+    while (body.childElementCount > 400) body.removeChild(body.firstChild);
+    this.taskLogPanel.classList.add('show');
+    if (nearBottom) body.scrollTop = body.scrollHeight;
+  }
+
+  _replayLogs(lines) {
+    if (this._logReplayed || !this.taskLogBody) return;
+    this._logReplayed = true;
+    this.taskLogBody.innerHTML = '';
+    lines.forEach(l => this._appendLog(l));
+  }
 
   /* ── Results ──────────────────────────────────────────── */
   /** 与后端 Translator.normalize_lang_code 对齐，用于 Tab 展示判断 */

@@ -330,6 +330,34 @@ class CollectPostVideosTest(unittest.TestCase):
         )
         self.assertEqual(seen, [("首批博主", 1)])
 
+    def test_empty_page_after_has_more_warns(self):
+        """上一页 has_more=1 但下一页空列表：匿名截断，需告警提示配 Cookie。"""
+        pages = [
+            {
+                "status_code": 0,
+                "aweme_list": [_aweme(1), _aweme(2)],
+                "max_cursor": 2000,
+                "has_more": 1,
+            },
+            {"status_code": 0, "aweme_list": [], "max_cursor": None, "has_more": None},
+        ]
+
+        def fetch_json(cursor):
+            return pages.pop(0)
+
+        with mock.patch.object(dy.logger, "warning") as warn:
+            _nick, videos = dy._collect_post_videos(fetch_json, 100)
+        self.assertEqual([v["id"] for v in videos], ["1", "2"])
+        warn.assert_called_once()
+        self.assertIn("DOUYIN_COOKIE", warn.call_args[0][0])
+
+    def test_empty_first_page_no_warning(self):
+        """首页就空（博主无作品）不该误报截断告警。"""
+        page = {"status_code": 0, "aweme_list": [], "max_cursor": None, "has_more": 0}
+        with mock.patch.object(dy.logger, "warning") as warn:
+            dy._collect_post_videos(lambda cursor: dict(page), 100)
+        warn.assert_not_called()
+
 
 class ResolveLimitTest(unittest.TestCase):
     def test_explicit_param_wins(self):
