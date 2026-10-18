@@ -120,6 +120,32 @@ def is_douyin_profile_url(url: str) -> bool:
     return bool(douyin_sec_uid(url))
 
 
+def format_subtitle_markdown(entries: list, language: str) -> str:
+    """把字幕条目格式化为与 Whisper 输出结构一致的 Markdown。
+
+    三个入口的字幕链路共用：yt-dlp 字幕（video_processor）与抖音 cla_info
+    字幕（channel_processor）产出同一种结构，下游的无语音判定/元信息剥离
+    逻辑因此无需区分字幕来源。
+
+    entries: [{start: "MM:SS", end: "MM:SS", text: str}]
+    """
+    lines = [
+        "# Video Transcription",
+        "",
+        f"**Detected Language:** {language}",
+        "**Language Probability:** 1.00",
+        "",
+        "## Transcription Content",
+        "",
+    ]
+    for entry in entries:
+        lines.append(f"**[{entry['start']} - {entry['end']}]**")
+        lines.append("")
+        lines.append(entry["text"])
+        lines.append("")
+    return "\n".join(lines)
+
+
 def strip_transcript_meta(raw_script: str) -> str:
     """去掉 Whisper 输出的标题与语言元信息，保留时间戳与正文段落。
 

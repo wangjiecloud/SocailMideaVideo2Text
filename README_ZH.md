@@ -21,7 +21,7 @@
 - 🌍 **多语言摘要**：支持 11 种语言的智能摘要生成
 - ⚙️ **条件式翻译**：当所选摘要语言与转录语言不一致时，自动生成翻译
 - 🔀 **litellm 模型选择**：页面中的模型下拉列表读取自 `~/.config/opencode/ms.json`（与 lunwenAgent 运行时同源，列表自动保持同步，项目根 `ms.json` 副本兜底），凭据来自 `llm-config.json`，经 litellm 网关连接 —— 选个模型就能用，无需手动填写 API Key
-- 📺 **抖音博主批量转录**：粘贴博主主页链接（`douyin.com/user/...`），全部视频转录为一份合集文稿，每节以视频发布时间开头，并生成一次整体摘要。单个视频失败会跳过，不会中断整批任务
+- 📺 **抖音博主批量转录**：粘贴博主主页链接（`douyin.com/user/...`），全部视频转录为一份合集文稿，每节以视频发布时间开头，并生成一次整体摘要。单个视频失败会跳过，不会中断整批任务。长任务支持**暂停**（当前视频完成后生效）与**续转**——逐视频进度持久化，暂停/中断的任务显示在「未完成的博主任务」面板，一键续转，千视频博主也能跨重启跑完
 - 📡 **实时进度**：通过 SSE 推送实时状态，并用徽章标明本次走的是字幕、Whisper 还是抖音博主路径
 - 📱 **移动适配**：响应式布局，深色界面
 
@@ -154,7 +154,7 @@ python3 start.py --prod
 **1. 选择输入方式：链接、本地文件或抖音博主主页**
 
 - **视频/播客链接**：在输入框粘贴 YouTube、Bilibili 等支持的平台链接
-- **抖音博主主页**：粘贴 `https://www.douyin.com/user/<sec_uid>`，该博主的全部视频会被转录为一份合集文稿，按各视频发布时间分节，并生成一次整体摘要（不逐视频跑 LLM —— 博主可能有几百个视频，成本不现实）。设置 `DOUYIN_COOKIE` 可提高解析成功率；部分公司网络会完全屏蔽 `douyin.com`
+- **抖音博主主页**：粘贴 `https://www.douyin.com/user/<sec_uid>`，该博主的全部视频会被转录为一份合集文稿，按各视频发布时间分节，并生成一次整体摘要（不逐视频跑 LLM —— 博主可能有几百个视频，成本不现实）。视频带原生字幕（`cla_info`）时直接提取；否则下载最低码率流用 Whisper 转录，直链异常时回退分享页。设置 `DOUYIN_COOKIE` 可提高成功率；安装 Playwright（`pip install playwright && playwright install chromium`）后可用真实浏览器抓取完整视频列表 —— 抖音 2026 年风控对纯 HTTP 客户端做了封锁。`DOUYIN_MAX_VIDEOS` 可限制单次处理的视频数（测试用）；部分公司网络会完全屏蔽 `douyin.com`
 - **本地上传**：将文件拖到虚线框内，或点击选择文件。点击同一个 **Transcribe** 按钮开始处理。上传与链接共用 `POST /api/process-video`（multipart 带 `file` 字段），便于反向代理只放行该路径时仍可使用上传
 
 **2. 选择处理选项**
@@ -333,7 +333,9 @@ Claude Desktop 则把同样的 command 和 args 加到 Claude Desktop 的 MCP �
 | `GET` | `/api/task-stream/{task_id}` | SSE 实时进度流 |
 | `GET` | `/api/download/{filename}` | 以附件形式下载结果（`.md` 或媒体文件），可选 `?name=` 指定友好文件名 |
 | `GET` | `/api/media/{filename}` | 内联播放媒体，支持 HTTP Range，可拖动进度条 |
-| `DELETE` | `/api/task/{task_id}` | 取消运行中的任务并删除记录 |
+| `DELETE` | `/api/task/{task_id}` | 取消运行中的任务并删除记录（博主任务会一并清理续转进度） |
+| `POST` | `/api/task/{task_id}/pause` | 请求暂停运行中的博主合集任务——当前视频转录完成后生效，逐视频进度落盘供续转 |
+| `GET` | `/api/tasks/unfinished` | 暂停/中断的博主任务及其逐视频进度，前端渲染「未完成的博主任务」面板 |
 | `GET` | `/api/litellm/models` | 返回模型列表（`ms.json`，页面下拉框用），含 `default` 默认模型 |
 | `POST` | `/api/models` | 旧版代理：拉取任意 OpenAI 兼容服务商的模型列表 |
 | `GET` | `/api/tasks/active` | 活跃任务计数（调试用） |
@@ -389,7 +391,7 @@ AI-Video-Transcriber/
 │   ├── main.py             # FastAPI 应用、路由、任务编排
 │   ├── pipeline.py         # Web/CLI/MCP 共用的纯函数（含无语音判定）
 │   ├── video_processor.py  # yt-dlp：字幕、音频、原视频
-│   ├── douyin.py           # 抖音博主主页解析（SSR 数据 + 分页接口）
+│   ├── douyin.py           # 抖音博主主页解析（SSR 快路径 + Playwright 浏览器兜底 + 分享页视频信息）
 │   ├── channel_processor.py# 博主批量模式：逐视频下载转录 → 合集文稿
 │   ├── transcriber.py      # Faster-Whisper 转录
 │   ├── summarizer.py       # 文稿优化 + 摘要
@@ -432,6 +434,7 @@ AI-Video-Transcriber/
 | `OPENAI_BASE_URL` | OpenAI 兼容端点 | 服务商默认 |
 | `OPENAI_TRANSLATION_MODEL` | 翻译使用的模型 | `gpt-4o` |
 | `DOUYIN_COOKIE` | 抖音浏览器 Cookie 字符串，提高博主主页解析成功率 | – |
+| `DOUYIN_MAX_VIDEOS` | 单次抖音博主任务处理的视频数上限（测试/抽样用） | 不限制 |
 | `WHISPER_MODEL_SIZE` | Whisper 模型大小 | `base` |
 | `UPLOAD_MAX_MB` | 本地上传单文件大小上限（MB） | `200` |
 | `VIDEO_MAX_HEIGHT` | 原视频下载的清晰度上限 | `720` |

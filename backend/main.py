@@ -22,11 +22,13 @@ from summarizer import Summarizer
 from translator import Translator
 from channel_processor import ChannelProcessor
 import model_registry
+import progress_store
 from pipeline import (
     MEDIA_MIME,
     NO_SPEECH_NOTICE,
     UPLOAD_ALLOWED_EXT,
     VIDEO_EXT,
+    douyin_sec_uid as _douyin_sec_uid,
     is_douyin_profile_url as _is_douyin_profile_url,
     media_kind as _media_kind,
     sanitize_title_for_filename as _sanitize_title_for_filename,
@@ -158,20 +160,31 @@ INTERRUPTED_MESSAGE = "服务重启，任务已中断，请重新提交"
 
 
 def mark_interrupted_tasks(tasks_data: dict) -> int:
-    """把上次进程遗留的 processing 任务标记为失败。
+    """把上次进程遗留的 processing 任务标记为终态。
 
     进程重启后这些任务已无协程在跑，若保持 processing，前端订阅后会永远卡在旧进度。
+    博主合集任务有逐视频的续转进度文件，标记为 paused 让前端显示为可续转，
+    而不是不可恢复的失败。
     """
     count = 0
     for task in tasks_data.values():
         if task.get("status") == "processing":
-            task.update(
-                {
-                    "status": "error",
-                    "error": INTERRUPTED_MESSAGE,
-                    "message": INTERRUPTED_MESSAGE,
-                }
-            )
+            if task.get("channel"):
+                task.update(
+                    {
+                        "status": "paused",
+                        "error": None,
+                        "message": "服务重启，任务已暂停，可续转继续",
+                    }
+                )
+            else:
+                task.update(
+                    {
+                        "status": "error",
+                        "error": INTERRUPTED_MESSAGE,
+                        "message": INTERRUPTED_MESSAGE,
+                    }
+                )
             count += 1
     return count
 
@@ -732,6 +745,8 @@ async def process_video(
             "error": None,
             "url": url,  # 保存URL用于去重
             "settings": settings,
+            # 博主任务打标：重启后的遗留任务按 paused（可续转）而非 error 处理
+            "channel": is_channel,
         }
         save_tasks(tasks)
 
@@ -936,7 +951,16 @@ async def process_channel_task(
     解析博主全部视频 → 逐个「下载音频 → Whisper 转录」→ 按发布时间分节拼
     合集文稿 → 整体做一次 LLM 摘要。不做逐视频的优化/翻译（几百个视频的
     成本不现实），也不下载保留原视频（合集场景只有文本产物）。
+
+    断点续转：逐视频结果写入 progress_store（按 sec_uid 独立文件），重启/
+    暂停/中断后重新提交同一博主时自动复用已完成的视频小节，只补剩余部分。
     """
+    sec_uid = _douyin_sec_uid(url) or ""
+    progress_data = progress_store.load_progress(TEMP_DIR, sec_uid) if sec_uid else {}
+    resume = progress_store.resume_sections(progress_data)
+    if resume:
+        logger.info(f"博主任务续转: {url} 已有 {len(resume)} 个视频的进度")
+
     try:
         # 与单视频任务同一套 LLM 解析：请求级模型优先，litellm 兜底
         request_llm = model_registry.resolve_llm_settings(
@@ -958,13 +982,76 @@ async def process_channel_task(
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
 
+        def on_list(nickname: str, total: int) -> None:
+            """拿到列表就落盘：服务此时被杀，未完成面板仍能显示 N/M 进度。"""
+            if not sec_uid:
+                return
+            progress_data["nickname"] = nickname or ""
+            progress_data["url"] = url
+            progress_data["total"] = total
+            progress_store.save_progress(TEMP_DIR, sec_uid, progress_data)
+
+        def on_video_record(record: dict) -> None:
+            if not sec_uid:
+                return
+            vid = str(record.get("id") or "")
+            if not vid:
+                return
+            videos = progress_data.setdefault("videos", {})
+            videos[vid] = {
+                k: record.get(k)
+                for k in (
+                    "status",
+                    "section",
+                    "title",
+                    "create_time",
+                    "index",
+                    "lang",
+                    "error",
+                )
+            }
+            progress_store.save_progress(TEMP_DIR, sec_uid, progress_data)
+
+        def pause_check() -> bool:
+            return bool(tasks.get(task_id, {}).get("pause_requested"))
+
         result = await channel_processor.process_creator(
             url=url,
             summarizer=request_summarizer,
             summary_language=summary_language,
             work_dir=TEMP_DIR,
             on_progress=on_progress,
+            resume_sections=resume,
+            pause_check=pause_check,
+            on_video_record=on_video_record,
+            on_list=on_list,
         )
+
+        # 请求暂停：已完成的小节都在进度文件里，任务标记为 paused 等待续转
+        if result.get("paused"):
+            tasks[task_id].update(
+                {
+                    "status": "paused",
+                    "pause_requested": False,
+                    "message": (
+                        f"已暂停：已完成 {result['done_count']}/{result['video_count']} 个视频，"
+                        "可在下方「未完成的博主任务」中续转"
+                    ),
+                    "video_title": result["title"],
+                    "video_count": result["video_count"],
+                    "done_count": result["done_count"],
+                    "ok_count": result["ok_count"],
+                    "no_speech_count": result["no_speech_count"],
+                    "image_count": result["image_count"],
+                    "failed_count": result["failed_count"],
+                }
+            )
+            save_tasks(tasks)
+            await broadcast_task_update(task_id, tasks[task_id])
+            logger.info(
+                f"博主任务已暂停: {task_id}（{result['done_count']}/{result['video_count']}）"
+            )
+            return
 
         title = result["title"]
         safe_title = _sanitize_title_for_filename(title)
@@ -986,7 +1073,7 @@ async def process_channel_task(
         done_message = (
             f"博主合集完成：共 {result['video_count']} 个视频"
             f"（成功 {result['ok_count']}，无语音 {result['no_speech_count']}，"
-            f"失败 {result['failed_count']}）"
+            f"图文 {result['image_count']}，失败 {result['failed_count']}）"
         )
 
         task_result = {
@@ -1006,6 +1093,7 @@ async def process_channel_task(
             "video_count": result["video_count"],
             "ok_count": result["ok_count"],
             "no_speech_count": result["no_speech_count"],
+            "image_count": result["image_count"],
             "failed_count": result["failed_count"],
         }
         if summary_path is not None:
@@ -1016,12 +1104,22 @@ async def process_channel_task(
             task_result["failed_videos"] = result["failed"]
 
         tasks[task_id].update(task_result)
+        # 合集已完成：清理续转进度文件，并移除同链接的旧 paused 任务记录
+        if sec_uid:
+            progress_store.delete_progress(TEMP_DIR, sec_uid)
+        for tid in [
+            t
+            for t, d in tasks.items()
+            if t != task_id and d.get("url") == url and d.get("status") == "paused"
+        ]:
+            del tasks[tid]
         save_tasks(tasks)
         logger.info(f"博主任务完成，准备广播最终状态: {task_id}")
         await broadcast_task_update(task_id, tasks[task_id])
 
     except asyncio.CancelledError:
-        # 被新任务取代或被删除；状态与 active_tasks 已由取消方处理
+        # 被新任务取代或被删除；状态与 active_tasks 已由取消方处理。
+        # 已完成视频的进度文件保留，续转仍可接着跑。
         logger.info(f"博主任务 {task_id} 已取消")
         raise
     except Exception as e:
@@ -1295,6 +1393,8 @@ async def delete_task(task_id: str):
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="任务不存在")
 
+    task_info = tasks[task_id]
+
     # 如果任务还在运行，先取消它
     if task_id in active_tasks:
         task = active_tasks[task_id]
@@ -1304,13 +1404,87 @@ async def delete_task(task_id: str):
         del active_tasks[task_id]
 
     # 从处理URL列表中移除
-    task_url = tasks[task_id].get("url")
+    task_url = task_info.get("url")
     if task_url:
         processing_urls.discard(task_url)
 
+    # 博主任务：一并清理续转进度文件，避免下次提交同一博主时意外续转
+    if task_info.get("channel") and task_url:
+        sec_uid = _douyin_sec_uid(task_url)
+        if sec_uid:
+            progress_store.delete_progress(TEMP_DIR, sec_uid)
+
     # 删除任务记录
     del tasks[task_id]
+    save_tasks(tasks)
     return {"message": "任务已取消并删除"}
+
+
+@app.post("/api/task/{task_id}/pause")
+async def pause_task(task_id: str):
+    """
+    请求暂停一个正在运行的博主合集任务。
+
+    暂停不打断进行中的视频：当前视频转录完成并落盘后任务转入 paused 状态，
+    已完成的进度保存在续转进度文件里，重新提交同一博主链接即可续转。
+    """
+    if task_id not in tasks:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    task_info = tasks[task_id]
+    if not task_info.get("channel"):
+        raise HTTPException(status_code=400, detail="仅抖音博主合集任务支持暂停")
+    if task_id not in active_tasks or active_tasks[task_id].done():
+        raise HTTPException(status_code=400, detail="任务不在运行中")
+    if task_info.get("pause_requested"):
+        return {"message": "已请求暂停，将在当前视频完成后暂停"}
+
+    task_info["pause_requested"] = True
+    save_tasks(tasks)
+    logger.info(f"任务 {task_id} 收到暂停请求")
+    return {"message": "已请求暂停，将在当前视频转录完成后暂停"}
+
+
+@app.get("/api/tasks/unfinished")
+async def get_unfinished_tasks():
+    """
+    未完成的博主合集任务（暂停/中断），前端据此渲染「未完成的博主任务」面板。
+
+    进度数字优先取任务记录；任务记录缺失时（服务重启后标记前的瞬间）从
+    续转进度文件补齐。
+    """
+    items = []
+    for tid, task in tasks.items():
+        if task.get("status") != "paused" or not task.get("channel"):
+            continue
+        url = task.get("url") or ""
+        done = task.get("done_count")
+        total = task.get("video_count")
+        # 重启遗留的 paused 任务没有 done_count：从进度文件补
+        if (done is None or total is None) and url:
+            sec_uid = _douyin_sec_uid(url)
+            if sec_uid:
+                pdata = progress_store.load_progress(TEMP_DIR, sec_uid)
+                if pdata.get("videos"):
+                    if total is None:
+                        total = pdata.get("total")
+                    if done is None:
+                        done = progress_store.done_count(pdata)
+        items.append(
+            {
+                "task_id": tid,
+                "url": url,
+                "title": task.get("video_title") or "",
+                "nickname": task.get("nickname") or "",
+                "progress": task.get("progress", 0),
+                "message": task.get("message", ""),
+                "video_count": total,
+                "done_count": done or 0,
+            }
+        )
+    # 后创建的排前面（tasks 字典按插入序，最后插入的最新）
+    items.reverse()
+    return {"unfinished": items}
 
 
 @app.get("/api/tasks/active")

@@ -88,11 +88,22 @@ publish time). There is no per-video optimize/translate — only a single overal
 summary — because a creator may have hundreds of videos.
 
 - Set `DOUYIN_COOKIE` (raw Cookie string from a logged-in browser) to raise the
-  success rate; anonymous requests are usually limited to the creator's first
-  page of videos by Douyin's risk control.
+  success rate. Douyin's 2026 risk control hides the video list from plain
+  HTTP clients, so full listing needs Playwright (`pip install playwright &&
+  playwright install chromium` — the pipeline drives a real browser in the
+  background); without it only whatever the server-rendered fast path yields is
+  available.
+- Per-video chain: native captions (`cla_info`) extracted directly when present;
+  otherwise the lowest-bitrate stream is downloaded and Whisper-transcribed,
+  with an `m.douyin.com/share/video/<id>` fallback when the direct link fails.
+  Image posts (photo carousels) are skipped, not transcribed.
+- Resume: per-video progress is persisted under the output dir, so re-running
+  the same creator URL after an interruption (Ctrl+C, restart) continues where
+  it left off instead of re-transcribing from scratch.
 - Result JSON gains `"channel": true`, `"video_count"`, `"ok_count"`,
-  `"no_speech_count"`, `"failed_count"`; per-video failures are skipped and
-  listed, they do not fail the whole run.
+  `"no_speech_count"`, `"image_count"`, `"failed_count"`, `"failed"` (list of
+  per-video failure titles); per-video failures are skipped and listed, they do
+  not fail the whole run. `DOUYIN_MAX_VIDEOS` env caps the run for testing.
 - `"no_speech": true` still means "nothing to transcribe" — here: none of the
   videos contained speech. Same rule: do not invent content.
 

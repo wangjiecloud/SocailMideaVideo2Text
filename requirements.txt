@@ -1,14 +1,23 @@
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.9
+python-dotenv>=1.0.0
 yt-dlp>=2024.12.13
 faster-whisper>=1.1.0
+# faster-whisper 的 decode_audio 依赖 av.open(metadata_errors=...)，
+# 该参数在 PyAV 16 里被移除，不设上界会装到 av 19 导致所有转录直接 TypeError
+av>=14,<16
 openai>=1.51.0
 pydantic>=2.7.0
 aiofiles>=24.1.0
 
 # 抖音博主主页解析需要浏览器 TLS 指纹（curl_cffi），普通 requests 会被直接 reset
 curl_cffi>=0.7.0
+
+# 抖音博主页 SSR 已失效，完整列表需要 Playwright 浏览器兜底（可选依赖）：
+#   pip install playwright && playwright install chromium
+# 不装时抖音博主转录会报错并提示安装，不影响其他平台。
+# playwright>=1.50.0
 
 # Only needed for mcp_server.py (agent/tool integration)
 mcp>=2.0.0

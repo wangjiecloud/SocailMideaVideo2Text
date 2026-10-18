@@ -21,7 +21,7 @@ An AI-powered tool to transcribe, summarize, and archive videos and podcasts —
 - 🌍 **Multi-Language Summaries**: Generate intelligent summaries in 11 languages
 - ⚙️ **Conditional Translation**: Auto-translates the transcript when the summary language differs from the source language
 - 🔀 **litellm Model Selection**: The model dropdown in the UI reads from `~/.config/opencode/ms.json` — the same file lunwenAgent uses at runtime, so the list stays in sync (project-root `ms.json` copy as fallback) — and connects through the litellm gateway using credentials from `llm-config.json` — pick a model and go, no manual API key entry
-- 📺 **Douyin Creator Batch Transcription**: Paste a creator page (`douyin.com/user/...`) and every video gets transcribed into one collection, each section headed by the video's publish time, with a single overall summary. Per-video failures are skipped, not fatal
+- 📺 **Douyin Creator Batch Transcription**: Paste a creator page (`douyin.com/user/...`) and every video gets transcribed into one collection, each section headed by the video's publish time, with a single overall summary. Per-video failures are skipped, not fatal. Long runs can be **paused** (takes effect after the current video) and **resumed** — per-video progress is persisted, and paused/interrupted jobs show up in an "Unfinished creator tasks" panel with one-click resume, so a 1000-video creator survives restarts
 - 📡 **Live Progress**: Server-sent events stream real-time status, with a badge showing whether the job took the subtitle, Whisper, or Douyin-creator path
 - 📱 **Mobile-Friendly**: Responsive layout, dark UI
 
@@ -153,7 +153,7 @@ python3 start.py --prod
 **1. Choose your input — URL, file, or a Douyin creator page**
 
 - **Video / podcast URL**: paste a link from YouTube, Bilibili, or any supported platform
-- **Douyin creator page**: paste `https://www.douyin.com/user/<sec_uid>` and all of that creator's videos are transcribed into one collection, sections separated by each video's publish time, with a single overall summary (no per-video LLM passes — a creator can have hundreds of videos). Set `DOUYIN_COOKIE` for higher success rates; some corporate networks block `douyin.com` entirely
+- **Douyin creator page**: paste `https://www.douyin.com/user/<sec_uid>` and all of that creator's videos are transcribed into one collection, sections separated by each video's publish time, with a single overall summary (no per-video LLM passes — a creator can have hundreds of videos). Native captions (`cla_info`) are extracted directly when present; otherwise the lowest-bitrate stream is downloaded and Whisper-transcribed, with a share-page fallback when the direct link misbehaves. Set `DOUYIN_COOKIE` for higher success rates, and install Playwright (`pip install playwright && playwright install chromium`) so the full video list can be fetched via a real browser — Douyin's 2026 risk control blocks server-side listing for plain HTTP clients. `DOUYIN_MAX_VIDEOS` caps the run for testing; some corporate networks block `douyin.com` entirely
 - **Local file**: drag a file onto the dashed upload area, or click to browse. The same **Transcribe** button starts the job. Uploads use the same API route as URLs (`POST /api/process-video` with a multipart `file`), which helps when a reverse proxy only allows that path
 
 **2. Pick your options**
@@ -341,7 +341,9 @@ All endpoints are served from the same origin as the UI.
 | `GET` | `/api/task-stream/{task_id}` | SSE stream of live progress updates |
 | `GET` | `/api/download/{filename}` | Download a result as an attachment (`.md` or media). Optional `?name=` sets a friendly filename |
 | `GET` | `/api/media/{filename}` | Stream media inline for the player — supports HTTP Range, so seeking works |
-| `DELETE` | `/api/task/{task_id}` | Cancel a running job and drop its record |
+| `DELETE` | `/api/task/{task_id}` | Cancel a running job and drop its record (creator jobs also drop their resume progress) |
+| `POST` | `/api/task/{task_id}/pause` | Request a pause for a running Douyin creator job — takes effect after the current video finishes; per-video progress is saved for resume |
+| `GET` | `/api/tasks/unfinished` | Paused/interrupted creator jobs with their per-video progress, rendered as the "Unfinished creator tasks" panel |
 | `GET` | `/api/litellm/models` | Model list (from `ms.json`) for the UI dropdown (`[{id, name, base_url}]` + `default`) |
 | `POST` | `/api/models` | Legacy proxy: list models from any OpenAI-compatible provider |
 | `GET` | `/api/tasks/active` | Active job counters (debugging) |
@@ -397,7 +399,7 @@ AI-Video-Transcriber/
 │   ├── main.py             # FastAPI app, routes, task orchestration
 │   ├── pipeline.py         # Pure helpers shared by web/CLI/MCP (incl. no-speech guard)
 │   ├── video_processor.py  # yt-dlp: subtitles, audio, original video
-│   ├── douyin.py           # Douyin creator-page parsing (SSR data + pagination API)
+│   ├── douyin.py           # Douyin creator-page parsing (SSR fast path + Playwright browser fallback + share-page video info)
 │   ├── channel_processor.py# Creator batch mode: per-video download+transcribe → one collection
 │   ├── transcriber.py      # Faster-Whisper transcription
 │   ├── summarizer.py       # Transcript optimization + summary
@@ -440,6 +442,7 @@ All are optional — the app runs with defaults and accepts AI credentials from 
 | `OPENAI_BASE_URL` | OpenAI-compatible endpoint | provider default |
 | `OPENAI_TRANSLATION_MODEL` | Model used for translation | `gpt-4o` |
 | `DOUYIN_COOKIE` | Browser Cookie string for Douyin — raises creator-page parsing success rates | – |
+| `DOUYIN_MAX_VIDEOS` | Cap on videos transcribed per Douyin creator run (testing/sampling) | no limit |
 | `WHISPER_MODEL_SIZE` | Whisper model size | `base` |
 | `UPLOAD_MAX_MB` | Max upload size per file (MB) | `200` |
 | `VIDEO_MAX_HEIGHT` | Max height for the original video download | `720` |

@@ -33,6 +33,15 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
+# 加载项目根目录 .env（存在时），DOUYIN_COOKIE / OPENAI_* 等配置免导出即可用；
+# 已导出的环境变量优先，不会被 .env 覆盖
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(PROJECT_ROOT / ".env")
+except ImportError:
+    pass
+
 from mcp.server import MCPServer  # noqa: E402
 
 import transcribe as cli  # noqa: E402  复用命令行那套编排，避免两份实现

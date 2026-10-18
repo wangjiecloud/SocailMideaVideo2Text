@@ -55,14 +55,20 @@ class VideoProcessor:
         }
 
     async def normalize_local_media_to_m4a(
-        self, input_path: Path, output_dir: Path
+        self, input_path: Path, output_dir: Path, out_name: Optional[str] = None
     ) -> str:
         """
         将本地上传的音视频转为单声道 16kHz AAC m4a，供 Faster-Whisper 使用（与 yt-dlp 后处理参数对齐）。
+
+        out_name: 输出文件名（不含扩展名）；缺省时自动生成。博主批量场景传确定性
+        名字（如 norm_audio_0001），便于调用方按模式批量清理临时文件。
         """
         output_dir.mkdir(parents=True, exist_ok=True)
-        unique_id = str(uuid.uuid4())[:8]
-        out_path = output_dir / f"upload_norm_{unique_id}.m4a"
+        if out_name:
+            out_path = output_dir / f"{out_name}.m4a"
+        else:
+            unique_id = str(uuid.uuid4())[:8]
+            out_path = output_dir / f"upload_norm_{unique_id}.m4a"
 
         cmd = [
             "ffmpeg",
@@ -87,8 +93,9 @@ class VideoProcessor:
         def _run():
             r = subprocess.run(cmd, capture_output=True, text=True)
             if r.returncode != 0:
+                # stderr 前段是版本 banner，真正的错误在末尾，取尾部才可读
                 err = (r.stderr or r.stdout or "").strip()
-                raise Exception(f"FFmpeg 转换失败: {err[:800]}")
+                raise Exception(f"FFmpeg 转换失败: {err[-800:]}")
             if not out_path.exists():
                 raise Exception("FFmpeg 未生成输出文件")
 
@@ -464,21 +471,9 @@ class VideoProcessor:
 
     def _format_subtitle_entries(self, entries: list, language: str) -> str:
         """将字幕条目格式化为与 Whisper 输出兼容的 Markdown，供下游管道直接使用。"""
-        lines = [
-            "# Video Transcription",
-            "",
-            f"**Detected Language:** {language}",
-            "**Language Probability:** 1.00",
-            "",
-            "## Transcription Content",
-            "",
-        ]
-        for entry in entries:
-            lines.append(f"**[{entry['start']} - {entry['end']}]**")
-            lines.append("")
-            lines.append(entry["text"])
-            lines.append("")
-        return "\n".join(lines)
+        from pipeline import format_subtitle_markdown
+
+        return format_subtitle_markdown(entries, language)
 
     async def download_and_convert(
         self,

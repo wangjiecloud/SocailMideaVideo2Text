@@ -68,11 +68,19 @@ class VideoTranscriber {
         download_audio:          'Download original audio',
         preparing_video:         'Preparing original video…',
         error_no_video:          'No video available for download',
-         no_speech_notice:        'No speech detected in this video, so there is nothing to transcribe. Summary and translation are skipped — the original video is still available below.',
-         channel_videos:          (n) => `Creator videos found: ${n}`,
-         channel_parsing:         'Parsing creator page…',
-         channel_transcribing:    (i, n) => `Transcribing video ${i}/${n}…`,
-         channel_no_speech_notice:'None of this creator\'s videos contain detectable speech, so there is nothing to transcribe and the summary is skipped.',
+          no_speech_notice:        'No speech detected in this video, so there is nothing to transcribe. Summary and translation are skipped — the original video is still available below.',
+          channel_videos:          (n) => `Creator videos found: ${n}`,
+          channel_parsing:         'Parsing creator page…',
+          channel_transcribing:    (i, n) => `Transcribing video ${i}/${n}…`,
+          channel_no_speech_notice:'None of this creator\'s videos contain detectable speech, so there is nothing to transcribe and the summary is skipped.',
+          pause_task:              'Pause',
+          pause_requested:         'Pausing after the current video…',
+          paused_notice:           (d, t) => `Paused — ${d}/${t} videos done. Resume it from “Unfinished creator tasks” below.`,
+          unfinished_title:        'Unfinished creator tasks',
+          resume_task:             'Resume',
+          delete_task:             'Delete',
+          uf_progress:             (d, t) => `${d}/${t} videos`,
+          uf_progress_saved:       'progress saved',
       },
       zh: {
         title:                   'AI 视频转录器',
@@ -126,11 +134,19 @@ class VideoTranscriber {
         download_audio:          '下载原音频',
         preparing_video:         '正在准备原视频…',
         error_no_video:          '没有可下载的视频',
-         no_speech_notice:        '这个视频中未检测到任何语音，因此没有可转录的内容。摘要与翻译已跳过 —— 原视频仍可在下方下载。',
-         channel_videos:          (n) => `已找到博主 ${n} 个视频`,
-         channel_parsing:         '正在解析博主主页…',
-         channel_transcribing:    (i, n) => `正在转录第 ${i}/${n} 个视频…`,
-         channel_no_speech_notice:'该博主的所有视频均未检测到语音，因此没有可转录的内容，摘要已跳过。',
+          no_speech_notice:        '这个视频中未检测到任何语音，因此没有可转录的内容。摘要与翻译已跳过 —— 原视频仍可在下方下载。',
+          channel_videos:          (n) => `已找到博主 ${n} 个视频`,
+          channel_parsing:         '正在解析博主主页…',
+          channel_transcribing:    (i, n) => `正在转录第 ${i}/${n} 个视频…`,
+          channel_no_speech_notice:'该博主的所有视频均未检测到语音，因此没有可转录的内容，摘要已跳过。',
+          pause_task:              '暂停',
+          pause_requested:         '将在当前视频完成后暂停…',
+          paused_notice:           (d, t) => `已暂停 —— 已完成 ${d}/${t} 个视频，可在下方「未完成的博主任务」中续转。`,
+          unfinished_title:        '未完成的博主任务',
+          resume_task:             '续转',
+          delete_task:             '删除',
+          uf_progress:             (d, t) => `${d}/${t} 个视频`,
+          uf_progress_saved:       '进度已保存',
       }
     };
 
@@ -138,6 +154,7 @@ class VideoTranscriber {
     this._bindEvents();
     this._loadSettings();
     this._loadModels();
+    // _switchLang 内会顺带拉取未完成的博主任务（暂停/中断）渲染可续转面板
     this._switchLang('en');
   }
 
@@ -172,6 +189,9 @@ class VideoTranscriber {
     this.translationTabItem = document.getElementById('translationTabItem');
     this.summaryTabItem     = document.getElementById('summaryTabItem');
     this.noSpeechBanner     = document.getElementById('noSpeechBanner');
+    this.pauseBtn           = document.getElementById('pauseBtn');
+    this.unfinishedPanel    = document.getElementById('unfinishedPanel');
+    this.unfinishedList     = document.getElementById('unfinishedList');
     this.tabBtns            = document.querySelectorAll('.tab-btn');
     this.tabItems           = document.querySelectorAll('.tab-item');
     this.tabPanes           = document.querySelectorAll('.tab-pane');
@@ -187,6 +207,8 @@ class VideoTranscriber {
     this._mediaName = null;
     // 当前结果是否为「博主模式且全部视频无语音」（无语音横幅文案切换用）
     this._channelNoSpeech = false;
+    // 暂停按钮状态：是否已发出暂停请求（语言切换时保持按钮文案正确）
+    this._pauseRequested = false;
   }
 
   /* ── Events ───────────────────────────────────────────── */
@@ -221,6 +243,20 @@ class VideoTranscriber {
     bindTabDl(this.dlTranslation, 'translation');
     bindTabDl(this.dlSummary,     'summary');
     if (this.dlVideo) this.dlVideo.addEventListener('click', () => this._downloadMedia());
+
+    // 暂停博主合集任务：不打断进行中的视频，当前视频转录完成后生效
+    if (this.pauseBtn) this.pauseBtn.addEventListener('click', () => this._pauseTask());
+    // 未完成任务面板的事件委托（续转 / 删除）
+    if (this.unfinishedList) {
+      this.unfinishedList.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-act]');
+        if (!btn) return;
+        const item = btn.closest('[data-task-id]');
+        if (!item) return;
+        if (btn.dataset.act === 'resume') this._resumeUnfinished(item.dataset.taskId);
+        else if (btn.dataset.act === 'delete') this._deleteUnfinished(item.dataset.taskId);
+      });
+    }
 
     if (this.uploadPickBtn && this.fileInput && this.uploadZone) {
       this.uploadPickBtn.addEventListener('click', (e) => {
@@ -292,6 +328,9 @@ class VideoTranscriber {
     });
 
     this._applyMediaLabels();
+    // 暂停按钮文案按请求状态恢复；未完成任务面板用新语言重渲染
+    this._applyPauseLabel();
+    this._loadUnfinished();
   }
 
   /* ── Settings persistence ─────────────────────────────── */
@@ -359,6 +398,7 @@ class VideoTranscriber {
     this._setLoading(true);
     this._hideError();
     this._showProgress();
+    this._resetPauseState();
 
     try {
       const fd = new FormData();
@@ -412,6 +452,7 @@ class VideoTranscriber {
     this._setLoading(true);
     this._hideError();
     this._showProgress();
+    this._resetPauseState();
 
     const sumLang = this.summaryLangSel.value;
     try {
@@ -462,10 +503,31 @@ class VideoTranscriber {
 
         if (task.status === 'completed') {
           this._stopSP(); this._stopSSE(); this._setLoading(false); this._hideProgress();
+          this._resetPauseState();
           this._showResults(task);
+          this._loadUnfinished();
+        } else if (task.status === 'paused') {
+          // 博主合集暂停：已完成进度已落盘，等用户从「未完成的博主任务」续转
+          this._stopSP(); this._stopSSE(); this._setLoading(false);
+          this._resetPauseState();
+          const m = (task.message || '');
+          const counts = m.match(/已完成\s*(\d+)\s*\/\s*(\d+)/);
+          const done = counts ? Number(counts[1]) : (task.done_count ?? 0);
+          const total = counts ? Number(counts[2]) : (task.video_count ?? 0);
+          const msg = (done || total)
+            ? this.t('paused_notice')(done, total)
+            : m;
+          // 直接写元素：_renderProgress 的文案映射会把「已完成」错翻成「处理完成」
+          const p = Math.max(0, Math.min(100, Number(task.progress) || 0));
+          this.progressStatus.textContent = `${Math.round(p)}%`;
+          this.progressFill.style.width = `${p}%`;
+          this.progressMessage.textContent = msg;
+          this._loadUnfinished();
         } else if (task.status === 'error') {
           this._stopSP(); this._stopSSE(); this._setLoading(false); this._hideProgress();
+          this._resetPauseState();
           this._showError(task.error || 'Processing error');
+          this._loadUnfinished();
         }
       } catch (_) {}
     };
@@ -575,6 +637,8 @@ class VideoTranscriber {
 
   _setModeBadge(mode) {
     if (!this.modeBadge) return;
+    // 暂停只对博主合集任务有意义：字幕/Whisper 是单视频原子操作
+    if (this.pauseBtn && mode !== 'channel') this.pauseBtn.classList.remove('show');
     if (mode === 'subtitle') {
       this.modeBadge.textContent  = this.t('mode_subtitle');
       this.modeBadge.className    = 'mode-badge subtitle';
@@ -590,7 +654,147 @@ class VideoTranscriber {
       this.modeBadge.className    = 'mode-badge channel';
       this.modeBadge.style.display = 'inline-block';
       if (this.progressFill) this.progressFill.classList.remove('subtitle-mode');
+      if (this.pauseBtn) this.pauseBtn.classList.add('show');
     }
+  }
+
+  /* ── Pause (creator collections) ──────────────────────── */
+  async _pauseTask() {
+    if (!this.currentTaskId || !this.pauseBtn) return;
+    this.pauseBtn.disabled = true;
+    try {
+      const r = await fetch(`${this.apiBase}/task/${this.currentTaskId}/pause`, { method: 'POST' });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${r.status}`);
+      }
+      this._pauseRequested = true;
+      this._applyPauseLabel();
+    } catch (e) {
+      this.pauseBtn.disabled = false;
+      this._showError(e.message);
+    }
+  }
+
+  _applyPauseLabel() {
+    if (!this.pauseBtn) return;
+    const span = this.pauseBtn.querySelector('span');
+    if (!span) return;
+    span.textContent = this._pauseRequested ? this.t('pause_requested') : this.t('pause_task');
+  }
+
+  _resetPauseState() {
+    this._pauseRequested = false;
+    if (this.pauseBtn) { this.pauseBtn.classList.remove('show'); this.pauseBtn.disabled = false; }
+    this._applyPauseLabel();
+  }
+
+  /* ── Unfinished creator tasks (paused/resumable) ──────── */
+  async _loadUnfinished() {
+    if (!this.unfinishedPanel || !this.unfinishedList) return;
+    try {
+      const r = await fetch(`${this.apiBase}/tasks/unfinished`);
+      if (!r.ok) return;
+      const data = await r.json();
+      this._renderUnfinished(data.unfinished || []);
+    } catch (_) {
+      // 面板加载失败不阻塞主流程
+    }
+  }
+
+  _renderUnfinished(items) {
+    if (!this.unfinishedPanel || !this.unfinishedList) return;
+    this.unfinishedList.innerHTML = '';
+    if (!items.length) {
+      this.unfinishedPanel.classList.remove('show');
+      return;
+    }
+    items.forEach(t => {
+      const row = document.createElement('div');
+      row.className = 'unfinished-item';
+      row.dataset.taskId = t.task_id;
+      row.dataset.url = t.url || '';
+
+      const info = document.createElement('div');
+      info.className = 'uf-info';
+      const title = document.createElement('div');
+      title.className = 'uf-title';
+      title.textContent = t.title || t.url || '…';
+      title.title = title.textContent;
+      info.appendChild(title);
+
+      const meta = document.createElement('div');
+      meta.className = 'uf-meta';
+      if (t.video_count != null && t.done_count != null) {
+        const done = Number(t.done_count) || 0, total = Number(t.video_count) || 0;
+        const label = document.createElement('span');
+        label.textContent = this.t('uf_progress')(done, total);
+        meta.appendChild(label);
+        const bar = document.createElement('div');
+        bar.className = 'uf-mini-bar';
+        const fill = document.createElement('div');
+        fill.className = 'uf-mini-fill';
+        fill.style.width = total > 0 ? `${Math.min(100, Math.round(done * 100 / total))}%` : '0%';
+        bar.appendChild(fill);
+        meta.appendChild(bar);
+      } else {
+        const label = document.createElement('span');
+        label.textContent = this.t('uf_progress_saved');
+        meta.appendChild(label);
+      }
+      info.appendChild(meta);
+      row.appendChild(info);
+
+      const actions = document.createElement('div');
+      actions.className = 'uf-actions';
+      const resumeBtn = document.createElement('button');
+      resumeBtn.className = 'btn-uf';
+      resumeBtn.dataset.act = 'resume';
+      resumeBtn.innerHTML = `<i class="fas fa-play"></i> ${this.t('resume_task')}`;
+      actions.appendChild(resumeBtn);
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn-uf ghost';
+      delBtn.dataset.act = 'delete';
+      delBtn.innerHTML = `<i class="fas fa-trash-can"></i> ${this.t('delete_task')}`;
+      actions.appendChild(delBtn);
+      row.appendChild(actions);
+
+      this.unfinishedList.appendChild(row);
+    });
+    this.unfinishedPanel.classList.add('show');
+  }
+
+  _resumeUnfinished(taskId) {
+    const row = this.unfinishedList && this.unfinishedList.querySelector(`[data-task-id="${taskId}"]`);
+    const url = row && row.dataset.url;
+    if (!url) {
+      // 行上没存 URL 时退回任务详情接口取
+      fetch(`${this.apiBase}/task-status/${taskId}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(t => { if (t && t.url) this._startResume(t.url); })
+        .catch(() => {});
+      return;
+    }
+    this._startResume(url);
+  }
+
+  _startResume(url) {
+    if (this.submitBtn.disabled) return;
+    this.videoUrlInput.value = url;
+    this._startTranscription();
+  }
+
+  async _deleteUnfinished(taskId) {
+    try {
+      const r = await fetch(`${this.apiBase}/task/${taskId}`, { method: 'DELETE' });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${r.status}`);
+      }
+    } catch (e) {
+      this._showError(e.message);
+    }
+    this._loadUnfinished();
   }
 
   _initSP() {

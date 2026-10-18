@@ -36,6 +36,10 @@ venv/bin/python mcp_server.py --selftest
 - main.py 启动时把上次遗留的 `processing` 任务标记为中断；停服有 `SHUTDOWN_FORCE_EXIT_SECONDS`（默认 3s）强退看门狗，测试中置 `None` 关闭。
 - 任务编排：同参数的运行中任务会被复用（dedup）；模型或摘要语言变化会取消并取代（supersede）正在跑的任务——`tests/test_task_dedup.py` 全覆盖。
 - 设了 `OPENAI_API_KEY` 但未设 `OPENAI_BASE_URL` 时，start.py 会默认用 `https://oneapi.basevec.com/v1`（写死在代码里，README 未提）。
+- **抖音博主合集链**（`backend/douyin.py` + `backend/channel_processor.py`）：列表获取 = SSR 快路径 → Playwright 浏览器兜底（2026 风控下唯一能拿全量列表的方式，页面内 fetch 由 SDK 自动签名）；单视频 = `cla_info` 字幕直提 → 最低码率直链 → `m.douyin.com/share/video/<id>` 分享页兜底 → yt-dlp 最后兜底。图文（`images` 或 `aweme_type==150`）跳过不算失败。`DOUYIN_COOKIE`（.env）与 `DOUYIN_MAX_VIDEOS`（限量测试）都从环境读取，三个代码入口都加载 .env（python-dotenv，不覆盖已导出变量）。
+- **博主合集的暂停/续转**：逐视频进度落盘在 `temp/channel_progress_<sha1(sec_uid)[:20]>.json`（`backend/progress_store.py`，按博主独立、与 tasks.json 解耦）；合集完成或删除任务时清理，批量清理 temp/ 时不要删。Web 暂停 = `POST /api/task/{id}/pause`（不打断进行中的视频），重跑同一博主自动复用已完成小节；重启遗留的 channel 任务标记为 `paused` 而非 error（前端「未完成的博主任务」面板可续转）。`channel_processor.process_creator` 通过 `pause_check`/`on_video_record`/`on_list`/`resume_sections` 四个回调参数保持纯编排，不做进度文件 I/O。
+- **依赖红线**：faster-whisper 1.2.1 与 PyAV ≥16 不兼容（`av.open(metadata_errors=...)` 参数被移除，转录直接 TypeError），requirements.txt 钉了 `av>=14,<16`，升级 faster-whisper 前先确认它支持的 PyAV 版本。
+- **HF 模型下载**：huggingface.co 直连会超时，需 `HF_ENDPOINT=https://hf-mirror.com` + `HF_HUB_DISABLE_XET=1`（Xet CAS 401）；模型缓存后转录离线可用。
 
 ## 测试注意
 

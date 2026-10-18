@@ -27,12 +27,23 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
+# 加载项目根目录 .env（存在时），DOUYIN_COOKIE / OPENAI_* 等配置免导出即可用；
+# 已导出的环境变量优先，不会被 .env 覆盖
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(PROJECT_ROOT / ".env")
+except ImportError:
+    pass
+
 from channel_processor import ChannelProcessor  # noqa: E402
 from douyin import DouyinError  # noqa: E402
 from model_registry import resolve_llm_settings  # noqa: E402
+import progress_store  # noqa: E402
 from pipeline import (  # noqa: E402
     NO_SPEECH_NOTICE,
     UPLOAD_ALLOWED_EXT,
+    douyin_sec_uid,
     is_douyin_profile_url,
     media_kind,
     sanitize_title_for_filename,
@@ -149,11 +160,49 @@ async def _run_channel(args, vp, transcriber, summarizer, out_dir, quiet) -> dic
 
     与单视频流程的区别：不做逐视频的 LLM 优化/翻译（几百个视频成本不现实），
     只做「逐视频 Whisper 转录 → 合集拼接 → 一次整体摘要」。
+
+    断点续转：逐视频进度落在 out_dir 的续转进度文件里，上次中断（Ctrl+C、
+    服务重启）后重跑同一博主自动跳过已完成的视频，只补剩余部分。
     """
     channel = ChannelProcessor(vp, transcriber)
 
     def on_progress(progress: int, message: str) -> None:
         _log(f"· [{progress}%] {message}", quiet)
+
+    sec_uid = douyin_sec_uid(args.source) or ""
+    progress_data = progress_store.load_progress(out_dir, sec_uid) if sec_uid else {}
+    resume = progress_store.resume_sections(progress_data)
+    if resume:
+        _log(f"检测到未完成的合集进度，续转 {len(resume)} 个已完成的视频...", quiet)
+
+    def on_list(nickname: str, total: int) -> None:
+        if not sec_uid:
+            return
+        progress_data["nickname"] = nickname or ""
+        progress_data["url"] = args.source
+        progress_data["total"] = total
+        progress_store.save_progress(out_dir, sec_uid, progress_data)
+
+    def on_video_record(record: dict) -> None:
+        if not sec_uid:
+            return
+        vid = str(record.get("id") or "")
+        if not vid:
+            return
+        videos = progress_data.setdefault("videos", {})
+        videos[vid] = {
+            k: record.get(k)
+            for k in (
+                "status",
+                "section",
+                "title",
+                "create_time",
+                "index",
+                "lang",
+                "error",
+            )
+        }
+        progress_store.save_progress(out_dir, sec_uid, progress_data)
 
     result = await channel.process_creator(
         url=args.source,
@@ -162,7 +211,18 @@ async def _run_channel(args, vp, transcriber, summarizer, out_dir, quiet) -> dic
         work_dir=out_dir,
         on_progress=on_progress,
         no_llm=args.no_llm,
+        resume_sections=resume,
+        on_video_record=on_video_record,
+        on_list=on_list,
     )
+
+    if result.get("paused"):
+        # CLI 没有暂停入口（无 pause_check），防御性兜底
+        raise TranscribeError("合集已暂停（无产物）；重跑同一命令可续转")
+
+    # 合集完成：清理续转进度文件
+    if sec_uid:
+        progress_store.delete_progress(out_dir, sec_uid)
 
     title = result["title"]
     safe_title = sanitize_title_for_filename(title)
@@ -190,12 +250,14 @@ async def _run_channel(args, vp, transcriber, summarizer, out_dir, quiet) -> dic
         "summary_language": args.summary_language,
         "files": written,
         "media": None,
-        # 博主模式统计（成功/无语音/失败按视频数计）
+        # 博主模式统计（成功/无语音/图文/失败按视频数计）
         "channel": True,
         "video_count": result["video_count"],
         "ok_count": result["ok_count"],
         "no_speech_count": result["no_speech_count"],
+        "image_count": result["image_count"],
         "failed_count": result["failed_count"],
+        "failed": result["failed"],
     }
 
 
