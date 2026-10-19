@@ -1141,9 +1141,9 @@ async def process_channel_task(
             task_result["failed_videos"] = result["failed"]
 
         tasks[task_id].update(task_result)
-        # 合集已完成：清理续转进度文件，并移除同链接的旧 paused 任务记录
-        if sec_uid:
-            progress_store.delete_progress(TEMP_DIR, sec_uid)
+        # 合集已完成：移除同链接的旧 paused 任务记录（其进度已并入本任务结果）。
+        # 续转进度文件保留下来作为增量缓存：再次提交同一博主只补新视频、
+        # 重试失败视频；想全量重跑时删除本任务即可（删除任务会清理进度文件）
         for tid in [
             t
             for t, d in tasks.items()
@@ -1425,6 +1425,22 @@ async def stream_media(filename: str):
         raise HTTPException(status_code=500, detail=f"读取失败: {str(e)}")
 
 
+def _other_task_needs_progress(exclude_task_id: str, sec_uid: str) -> bool:
+    """是否还有其他同博主任务（运行中/已暂停）依赖该续转进度文件。
+
+    同一博主可能同时存在多条任务记录（如一条失败、一条暂停），进度文件按
+    sec_uid 共享，删除任务时需确认没有别的任务还要用它续转。
+    """
+    for tid, info in tasks.items():
+        if tid == exclude_task_id or not info.get("channel"):
+            continue
+        if info.get("status") not in ("processing", "paused"):
+            continue
+        if _douyin_sec_uid(info.get("url") or "") == sec_uid:
+            return True
+    return False
+
+
 @app.delete("/api/task/{task_id}")
 async def delete_task(task_id: str):
     """
@@ -1448,10 +1464,11 @@ async def delete_task(task_id: str):
     if task_url:
         processing_urls.discard(task_url)
 
-    # 博主任务：一并清理续转进度文件，避免下次提交同一博主时意外续转
+    # 博主任务：一并清理续转进度文件，避免下次提交同一博主时意外续转；
+    # 同博主还有运行/暂停中的任务时要保留（进度文件按 sec_uid 共享）
     if task_info.get("channel") and task_url:
         sec_uid = _douyin_sec_uid(task_url)
-        if sec_uid:
+        if sec_uid and not _other_task_needs_progress(task_id, sec_uid):
             progress_store.delete_progress(TEMP_DIR, sec_uid)
 
     # 删除任务记录

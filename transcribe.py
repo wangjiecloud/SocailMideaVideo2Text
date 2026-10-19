@@ -220,9 +220,8 @@ async def _run_channel(args, vp, transcriber, summarizer, out_dir, quiet) -> dic
         # CLI 没有暂停入口（无 pause_check），防御性兜底
         raise TranscribeError("合集已暂停（无产物）；重跑同一命令可续转")
 
-    # 合集完成：清理续转进度文件
-    if sec_uid:
-        progress_store.delete_progress(out_dir, sec_uid)
+    # 合集完成：进度文件保留作增量缓存，重跑同一命令只补新发布的视频、
+    # 重试失败视频；需要全量重跑时删除 out_dir 下的 channel_progress_*.json
 
     title = result["title"]
     safe_title = sanitize_title_for_filename(title)

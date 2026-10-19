@@ -94,12 +94,20 @@ summary — because a creator may have hundreds of videos.
   background); without it only whatever the server-rendered fast path yields is
   available.
 - Per-video chain: native captions (`cla_info`) extracted directly when present;
-  otherwise the lowest-bitrate stream is downloaded and Whisper-transcribed,
-  with an `m.douyin.com/share/video/<id>` fallback when the direct link fails.
+  otherwise the lowest-bitrate stream is downloaded, burned-in subtitles are
+  OCR'd (creator-typed text; needs `rapidocr-onnxruntime`, auto-falls back to
+  Whisper when absent or when a video carries no burned subtitles — OCR wins
+  on fast-paced speech where Whisper mis-hears homophones), and audio is
+  Whisper-transcribed as the final fallback, with an
+  `m.douyin.com/share/video/<id>` fallback when the direct link fails.
   Image posts (photo carousels) are skipped, not transcribed.
-- Resume: per-video progress is persisted under the output dir, so re-running
-  the same creator URL after an interruption (Ctrl+C, restart) continues where
-  it left off instead of re-transcribing from scratch.
+- Resume / incremental: per-video progress is persisted under the output dir
+  and kept after the run completes. Re-running the same creator URL — after an
+  interruption (Ctrl+C, restart) or after the collection finished — reuses
+  every finished section and only fetches/transcribes videos published since
+  (plus retries of failed ones), then regenerates the summary over the full
+  collection. Delete the `channel_progress_*.json` file in the output dir
+  first for a from-scratch rerun.
 - Result JSON gains `"channel": true`, `"video_count"`, `"ok_count"`,
   `"no_speech_count"`, `"image_count"`, `"failed_count"`, `"failed"` (list of
   per-video failure titles); per-video failures are skipped and listed, they do

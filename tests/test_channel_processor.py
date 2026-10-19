@@ -136,6 +136,17 @@ class ChannelProcessorTest(unittest.IsolatedAsyncioTestCase):
         self.work_root = Path(tempfile.mkdtemp())
         self.media = _Recorder()
 
+        # 硬字幕 OCR 默认 mock 为未命中：现有测试不真跑 ffmpeg/OCR 引擎；
+        # OCR 专项用例在自己的 with 里再叠一层 patch 覆盖返回值
+        async def _no_ocr(video_path, work_dir):
+            return ""
+
+        self._ocr_patcher = mock.patch.object(
+            cp_mod.subtitle_ocr, "extract_hard_subtitles", _no_ocr
+        )
+        self._ocr_patcher.start()
+        self.addCleanup(self._ocr_patcher.stop)
+
     def _patch_fetch(self, nickname="测试博主", videos=None):
         videos = VIDEOS if videos is None else videos
 
@@ -405,6 +416,93 @@ class ChannelProcessorTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             all(_re.search(r"\[\d+/2\]", line) for line in logs if "转录成功" in line)
         )
+
+    async def test_ocr_hit_skips_whisper(self):
+        """画面烧录字幕命中 OCR：直接用 OCR 文本，跳过音频规范化与 Whisper。"""
+        vp = FakeVideoProcessor()
+        # Whisper 若被调用会 IndexError（脚本队列已空），测试即失败
+        transcriber = FakeTranscriber([])
+        processor = ChannelProcessor(vp, transcriber)
+        logs = []
+
+        async def on_log(line):
+            logs.append(line)
+
+        videos = [
+            {
+                "id": "7000000000000000001",
+                "title": "OCR视频",
+                "create_time": 1760000000,
+                "low_gear_url": "https://cdn.example.com/low1.mp4",
+            },
+        ]
+
+        async def fake_ocr(video_path, work_dir):
+            return "OCR 提取的字幕正文"
+
+        with (
+            self._patch_fetch(videos=videos),
+            self._patch_cookie(),
+            self._patch_media(),
+            mock.patch.object(cp_mod.subtitle_ocr, "extract_hard_subtitles", fake_ocr),
+        ):
+            result = await processor.process_creator(
+                url="https://www.douyin.com/user/MS4wLjABAAAAfake",
+                summarizer=FakeSummarizer(),
+                summary_language="zh",
+                work_dir=self.work_root,
+                on_log=on_log,
+            )
+
+        self.assertEqual(result["ok_count"], 1)
+        self.assertEqual(result["detected_language"], "")  # OCR 路径无语言检测
+        self.assertIn("OCR 提取的字幕正文", result["script"])
+        # OCR 命中时既不抽音频也不跑 Whisper
+        self.assertEqual(vp.normalized, [])
+        self.assertTrue(any("低码率直链+硬字幕OCR" in line for line in logs))
+
+    async def test_ocr_miss_falls_back_to_whisper(self):
+        """OCR 未命中（无烧录字幕）：回落音频规范化 + Whisper，标签如实标注。"""
+        vp = FakeVideoProcessor()
+        transcriber = FakeTranscriber([_raw_script("Whisper 正文")])
+        processor = ChannelProcessor(vp, transcriber)
+        logs = []
+
+        async def on_log(line):
+            logs.append(line)
+
+        videos = [
+            {
+                "id": "7000000000000000001",
+                "title": "无字幕视频",
+                "create_time": 1760000000,
+                "low_gear_url": "https://cdn.example.com/low1.mp4",
+            },
+        ]
+
+        async def fake_ocr(video_path, work_dir):
+            return ""
+
+        with (
+            self._patch_fetch(videos=videos),
+            self._patch_cookie(),
+            self._patch_media(),
+            mock.patch.object(cp_mod.subtitle_ocr, "extract_hard_subtitles", fake_ocr),
+        ):
+            result = await processor.process_creator(
+                url="https://www.douyin.com/user/MS4wLjABAAAAfake",
+                summarizer=FakeSummarizer(),
+                summary_language="zh",
+                work_dir=self.work_root,
+                on_log=on_log,
+            )
+
+        self.assertEqual(result["ok_count"], 1)
+        self.assertEqual(result["detected_language"], "zh")
+        self.assertIn("Whisper 正文", result["script"])
+        self.assertEqual(len(vp.normalized), 1)  # 音频规范化确实执行
+        self.assertTrue(any("低码率直链+Whisper" in line for line in logs))
+        self.assertFalse(any("硬字幕OCR" in line for line in logs))
 
     async def test_section_body_merged_into_paragraph(self):
         """同一视频（同一日期小节）的正文合并为整段，不再按时间戳切分。"""

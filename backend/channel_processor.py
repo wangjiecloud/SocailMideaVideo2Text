@@ -63,6 +63,7 @@ from pipeline import (
     merge_transcript_text,
     transcribed_speech,
 )
+import subtitle_ocr
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,9 @@ logger = logging.getLogger(__name__)
 SOURCE_LABELS = {
     "caption": "cla_info字幕",
     "direct": "低码率直链+Whisper",
+    "direct_ocr": "低码率直链+硬字幕OCR",
     "share": "分享页直链+Whisper",
+    "share_ocr": "分享页直链+硬字幕OCR",
     "ytdlp": "yt-dlp+Whisper",
 }
 
@@ -482,10 +485,10 @@ class ChannelProcessor:
         low_gear_url = (video.get("low_gear_url") or "").strip()
         if low_gear_url:
             try:
-                script, lang = await self._download_and_transcribe(
+                script, lang, ocr_used = await self._download_and_transcribe(
                     low_gear_url, work_dir, stem, cookie
                 )
-                return script, lang, "direct"
+                return script, lang, "direct_ocr" if ocr_used else "direct"
             except asyncio.CancelledError:
                 raise
             except _TranscribeFailed:
@@ -509,10 +512,10 @@ class ChannelProcessor:
                 raise _ShareImagePost(video["id"])
             for play_url in share.get("play_urls") or []:
                 try:
-                    script, lang = await self._download_and_transcribe(
+                    script, lang, ocr_used = await self._download_and_transcribe(
                         play_url, work_dir, stem, cookie
                     )
-                    return script, lang, "share"
+                    return script, lang, "share_ocr" if ocr_used else "share"
                 except asyncio.CancelledError:
                     raise
                 except _TranscribeFailed:
@@ -577,15 +580,31 @@ class ChannelProcessor:
 
     async def _download_and_transcribe(
         self, url: str, work_dir: Path, stem: str, cookie: str
-    ) -> tuple[str, str]:
-        """流式下载媒体 → ffmpeg 抽取 16k 单声道 m4a → Whisper 转录。
+    ) -> tuple[str, str, bool]:
+        """流式下载媒体 → 硬字幕 OCR → ffmpeg 抽取 16k 单声道 m4a → Whisper。
 
+        画面里烧了字幕时 OCR 直接给出创作者原文，跳过音频规范化与 Whisper
+        （快语速内容的同音字错认远多于 OCR）；OCR 未命中再走音频链路。
+
+        返回 (原始转录 Markdown, 语言代码, 是否走了 OCR)。
         下载/规范化失败抛普通异常（调用方可换渠道重下）；转录失败抛
         _TranscribeFailed（换渠道重新下载没有意义，直接走重试）。
         """
         media_path = work_dir / f"{stem}.mp4"
         try:
             await download_media(url, media_path, cookie=cookie)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            raise Exception(f"媒体下载/规范化失败: {e}") from e
+
+        # 硬字幕 OCR：mp4 已在本地，先试画面字幕；未命中返回空串继续走音频
+        ocr_text = await subtitle_ocr.extract_hard_subtitles(media_path, work_dir)
+        if ocr_text:
+            logger.info(f"硬字幕 OCR 命中（{len(ocr_text)} 字符），跳过 Whisper")
+            return ocr_text, "", True
+
+        try:
             audio_path = await self.video_processor.normalize_local_media_to_m4a(
                 media_path, work_dir, out_name=f"norm_{stem}"
             )
@@ -602,7 +621,7 @@ class ChannelProcessor:
             raise _TranscribeFailed(f"转录失败: {e}") from e
 
         lang = (getattr(self.transcriber, "last_detected_language", None) or "").strip()
-        return script, lang
+        return script, lang, False
 
     @staticmethod
     def _merge_share_info(video: dict, share: dict) -> None:

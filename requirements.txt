@@ -14,6 +14,10 @@ aiofiles>=24.1.0
 # 抖音博主主页解析需要浏览器 TLS 指纹（curl_cffi），普通 requests 会被直接 reset
 curl_cffi>=0.7.0
 
+# 烧录（硬）字幕 OCR：画面字幕比 Whisper 语音识别准（快语速同音字错认少）。
+# 软依赖：未安装时自动回落 Whisper，不影响原链路；SUBTITLE_OCR=0 可关闭。
+rapidocr-onnxruntime>=1.2.0
+
 # 抖音博主页 SSR 已失效，完整列表需要 Playwright 浏览器兜底（可选依赖）：
 #   pip install playwright && playwright install chromium
 # 不装时抖音博主转录会报错并提示安装，不影响其他平台。

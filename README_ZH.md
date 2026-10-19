@@ -21,7 +21,7 @@
 - 🌍 **多语言摘要**：支持 11 种语言的智能摘要生成
 - ⚙️ **条件式翻译**：当所选摘要语言与转录语言不一致时，自动生成翻译
 - 🔀 **litellm 模型选择**：页面中的模型下拉列表读取自 `~/.config/opencode/ms.json`（与 lunwenAgent 运行时同源，列表自动保持同步，项目根 `ms.json` 副本兜底），凭据来自 `llm-config.json`，经 litellm 网关连接 —— 选个模型就能用，无需手动填写 API Key
-- 📺 **抖音博主批量转录**：粘贴博主主页链接（`douyin.com/user/...`），全部视频转录为一份合集文稿，每节以视频发布时间开头，并生成一次整体摘要。单个视频失败会跳过，不会中断整批任务。长任务支持**暂停**（当前视频完成后生效）与**续转**——逐视频进度持久化，暂停/中断的任务显示在「未完成的博主任务」面板，一键续转，千视频博主也能跨重启跑完
+- 📺 **抖音博主批量转录**：粘贴博主主页链接（`douyin.com/user/...`），全部视频转录为一份合集文稿，每节以视频发布时间开头，并生成一次整体摘要。单个视频失败会跳过，不会中断整批任务。长任务支持**暂停**（当前视频完成后生效）与**续转**——逐视频进度持久化，暂停/中断的任务显示在「未完成的博主任务」面板，一键续转，千视频博主也能跨重启跑完。完成的合集会转为**增量缓存**：再次提交同一博主只补新发布的视频（外加失败重试）并重新生成摘要，删除任务即重置为全量重跑
 - 📡 **实时进度**：通过 SSE 推送实时状态，并用徽章标明本次走的是字幕、Whisper 还是抖音博主路径
 - 📱 **移动适配**：响应式布局，深色界面
 
@@ -154,8 +154,9 @@ python3 start.py --prod
 **1. 选择输入方式：链接、本地文件或抖音博主主页**
 
 - **视频/播客链接**：在输入框粘贴 YouTube、Bilibili 等支持的平台链接
-- **抖音博主主页**：粘贴 `https://www.douyin.com/user/<sec_uid>`，该博主的全部视频会被转录为一份合集文稿，按各视频发布时间分节，并生成一次整体摘要（不逐视频跑 LLM —— 博主可能有几百个视频，成本不现实）。视频带原生字幕（`cla_info`）时直接提取；否则下载最低码率流用 Whisper 转录，直链异常时回退分享页。设置 `DOUYIN_COOKIE` 可提高成功率；安装 Playwright（`pip install playwright && playwright install chromium`）后可用真实浏览器抓取完整视频列表 —— 抖音 2026 年风控对纯 HTTP 客户端做了封锁。`DOUYIN_MAX_VIDEOS` 可限制单次处理的视频数（测试用）；部分公司网络会完全屏蔽 `douyin.com`
+- **抖音博主主页**：粘贴 `https://www.douyin.com/user/<sec_uid>`，该博主的全部视频会被转录为一份合集文稿，按各视频发布时间分节，并生成一次整体摘要（不逐视频跑 LLM —— 博主可能有几百个视频，成本不现实）。视频带原生字幕（`cla_info`）时直接提取；否则下载最低码率流，**画面烧录字幕走 OCR**——拿到的是创作者亲手敲的原文，快语速内容下比 Whisper 准得多（同音字错认大幅减少）。OCR 依赖 `rapidocr-onnxruntime`，且只对真正带烧录字幕的视频生效，其余情况回落 Whisper 音频转录，直链异常时回退分享页。设置 `DOUYIN_COOKIE` 可提高成功率；安装 Playwright（`pip install playwright && playwright install chromium`）后可用真实浏览器抓取完整视频列表 —— 抖音 2026 年风控对纯 HTTP 客户端做了封锁。`DOUYIN_MAX_VIDEOS` 可限制单次处理的视频数（测试用）；`SUBTITLE_OCR=0` 可关闭 OCR；部分公司网络会完全屏蔽 `douyin.com`
 - **本地上传**：将文件拖到虚线框内，或点击选择文件。点击同一个 **Transcribe** 按钮开始处理。上传与链接共用 `POST /api/process-video`（multipart 带 `file` 字段），便于反向代理只放行该路径时仍可使用上传
+- **再次提交已完成的博主（增量）**：合集完成后逐视频进度会保留，再次粘贴同一博主链接只会抓取并转录**新发布**的视频（外加失败重试），按发布时间并入原合集后重新生成整体摘要——博主后来删除的视频仍保留在缓存合集里。在界面里删除该任务会一并清掉这份缓存进度，下次提交即回到全量重跑
 
 **2. 选择处理选项**
 
@@ -201,6 +202,7 @@ venv/bin/python transcribe.py notes.txt --no-llm          # 无需 API Key
 
 `--json` 会把机器可读结果打到 stdout，进度信息走 stderr。
 退出码：`0` 成功，`2` 输入不合法，`1` 下载/转码失败。
+博主合集完成后会在输出目录保留逐视频进度（`channel_progress_*.json`），重跑同一博主命令即**增量**——只抓取并转录新发布的视频（外加失败重试）；需全量重跑时先删掉该文件。
 
 | 参数 | 含义 |
 |------|------|
@@ -333,7 +335,7 @@ Claude Desktop 则把同样的 command 和 args 加到 Claude Desktop 的 MCP �
 | `GET` | `/api/task-stream/{task_id}` | SSE 实时进度流 |
 | `GET` | `/api/download/{filename}` | 以附件形式下载结果（`.md` 或媒体文件），可选 `?name=` 指定友好文件名 |
 | `GET` | `/api/media/{filename}` | 内联播放媒体，支持 HTTP Range，可拖动进度条 |
-| `DELETE` | `/api/task/{task_id}` | 取消运行中的任务并删除记录（博主任务会一并清理续转进度） |
+| `DELETE` | `/api/task/{task_id}` | 取消运行中的任务并删除记录（删除博主任务会一并清理缓存的续转进度——这是把下次提交重置回全量的方式） |
 | `POST` | `/api/task/{task_id}/pause` | 请求暂停运行中的博主合集任务——当前视频转录完成后生效，逐视频进度落盘供续转 |
 | `GET` | `/api/tasks/unfinished` | 暂停/中断的博主任务及其逐视频进度，前端渲染「未完成的博主任务」面板 |
 | `GET` | `/api/litellm/models` | 返回模型列表（`ms.json`，页面下拉框用），含 `default` 默认模型 |
@@ -393,6 +395,7 @@ AI-Video-Transcriber/
 │   ├── video_processor.py  # yt-dlp：字幕、音频、原视频
 │   ├── douyin.py           # 抖音博主主页解析（SSR 快路径 + Playwright 浏览器兜底 + 分享页视频信息）
 │   ├── channel_processor.py# 博主批量模式：逐视频下载转录 → 合集文稿
+│   ├── subtitle_ocr.py     # 烧录字幕 OCR（RapidOCR）：快语速内容比 Whisper 准
 │   ├── transcriber.py      # Faster-Whisper 转录
 │   ├── summarizer.py       # 文稿优化 + 摘要
 │   ├── translator.py       # 条件式翻译
@@ -435,6 +438,7 @@ AI-Video-Transcriber/
 | `OPENAI_TRANSLATION_MODEL` | 翻译使用的模型 | `gpt-4o` |
 | `DOUYIN_COOKIE` | 抖音浏览器 Cookie 字符串，提高博主主页解析成功率 | – |
 | `DOUYIN_MAX_VIDEOS` | 单次抖音博主任务处理的视频数上限（测试/抽样用） | 不限制 |
+| `SUBTITLE_OCR` | 置 `0`/`off` 关闭烧录字幕 OCR（回落 Whisper） | 装有 `rapidocr-onnxruntime` 时默认开启 |
 | `WHISPER_MODEL_SIZE` | Whisper 模型大小 | `base` |
 | `UPLOAD_MAX_MB` | 本地上传单文件大小上限（MB） | `200` |
 | `VIDEO_MAX_HEIGHT` | 原视频下载的清晰度上限 | `720` |

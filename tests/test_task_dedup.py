@@ -13,6 +13,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 # main 在导入时读取 tasks.json，必须先把临时目录指过去，不能碰真实的 temp/
 _TEMP = tempfile.mkdtemp(prefix="transcriber-test-")
@@ -163,6 +164,203 @@ class DedupTests(unittest.TestCase):
         message = json.loads(self.client.portal.call(queue.get))
         self.assertEqual(message["status"], "error")
         main.sse_connections.pop(first, None)
+
+
+CHANNEL_SEC_UID = "MS4wLjABAAAAunitTestSecUid123"
+CHANNEL_URL = f"https://www.douyin.com/user/{CHANNEL_SEC_UID}?from_tab_name=main"
+CHANNEL_URL_VID = CHANNEL_URL + "&vid=7697589237429229440"
+
+
+class DeleteChannelTaskTests(unittest.TestCase):
+    """删除博主任务时的进度文件保留规则（同博主多任务共享进度文件）。"""
+
+    def setUp(self):
+        main.tasks.clear()
+        main.active_tasks.clear()
+        main.processing_urls.clear()
+        main.progress_store.delete_progress(main.TEMP_DIR, CHANNEL_SEC_UID)
+        self.client = TestClient(main.app)
+        self.client.__enter__()
+
+    def tearDown(self):
+        self.client.__exit__(None, None, None)
+        main.progress_store.delete_progress(main.TEMP_DIR, CHANNEL_SEC_UID)
+        main.tasks.clear()
+        main.save_tasks(main.tasks)
+
+    @staticmethod
+    def _add_task(task_id, status, url):
+        main.tasks[task_id] = {
+            "status": status,
+            "progress": 0,
+            "url": url,
+            "channel": True,
+            "message": "",
+        }
+
+    def _save_progress(self):
+        main.progress_store.save_progress(
+            main.TEMP_DIR,
+            CHANNEL_SEC_UID,
+            {
+                "sec_uid": CHANNEL_SEC_UID,
+                "total": 10,
+                "videos": {"1": {"status": "ok"}},
+            },
+        )
+        self.assertTrue(
+            main.progress_store.progress_path(main.TEMP_DIR, CHANNEL_SEC_UID).is_file()
+        )
+
+    def test_deleting_error_task_keeps_progress_of_paused_sibling(self):
+        """同博主一条 error 一条 paused：删 error 不得误删 paused 的续转进度。"""
+        self._save_progress()
+        self._add_task("err", "error", CHANNEL_URL_VID)
+        self._add_task("paused", "paused", CHANNEL_URL)
+
+        resp = self.client.delete("/api/task/err")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(
+            main.progress_store.progress_path(main.TEMP_DIR, CHANNEL_SEC_UID).is_file(),
+            "deleting the error sibling must not destroy the paused task's progress",
+        )
+        self.assertIn("paused", main.tasks)
+
+    def test_deleting_last_channel_task_removes_progress(self):
+        """没有其他运行/暂停中的同博主任务时，删除任务仍应清理进度文件。"""
+        self._save_progress()
+        self._add_task("paused", "paused", CHANNEL_URL)
+
+        resp = self.client.delete("/api/task/paused")
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(
+            main.progress_store.progress_path(main.TEMP_DIR, CHANNEL_SEC_UID).is_file()
+        )
+
+    def test_helper_only_counts_processing_or_paused_siblings(self):
+        """只有运行中/暂停的同博主任务才需要进度文件；error/completed 不算。"""
+        self._add_task("err", "error", CHANNEL_URL_VID)
+        self._add_task("done", "completed", CHANNEL_URL)
+        self.assertFalse(main._other_task_needs_progress("err", CHANNEL_SEC_UID))
+
+        self._add_task("paused", "paused", CHANNEL_URL)
+        self.assertTrue(main._other_task_needs_progress("err", CHANNEL_SEC_UID))
+        self.assertFalse(main._other_task_needs_progress("paused", CHANNEL_SEC_UID))
+
+        self._add_task("running", "processing", CHANNEL_URL_VID)
+        self.assertTrue(main._other_task_needs_progress("paused", CHANNEL_SEC_UID))
+
+        self.assertFalse(
+            main._other_task_needs_progress("running", "MS4wLjABAAAAanotherCreator9")
+        )
+
+
+class CompletedChannelTaskTests(unittest.TestCase):
+    """合集完成后进度文件保留为增量缓存；删除任务才是重置全量的入口。"""
+
+    def setUp(self):
+        main.tasks.clear()
+        main.active_tasks.clear()
+        main.processing_urls.clear()
+        main.progress_store.delete_progress(main.TEMP_DIR, CHANNEL_SEC_UID)
+        self.client = TestClient(main.app)
+        self.client.__enter__()
+
+    def tearDown(self):
+        self.client.__exit__(None, None, None)
+        main.progress_store.delete_progress(main.TEMP_DIR, CHANNEL_SEC_UID)
+        main.tasks.clear()
+        main.save_tasks(main.tasks)
+
+    def test_completed_channel_task_keeps_progress_for_incremental_rerun(self):
+        """合集完成后不删进度文件：再次提交同一博主=增量补新；删除任务=重置。"""
+        # 预置运行期间落盘的续转进度（mock 的 processor 不会触发回调）
+        main.progress_store.save_progress(
+            main.TEMP_DIR,
+            CHANNEL_SEC_UID,
+            {"sec_uid": CHANNEL_SEC_UID, "total": 1, "videos": {}},
+        )
+        main.tasks["chan"] = {
+            "status": "processing",
+            "progress": 0,
+            "url": CHANNEL_URL,
+            "channel": True,
+            "message": "",
+        }
+        result = {
+            "nickname": "测试博主",
+            "title": "测试博主的视频合集",
+            "paused": False,
+            "script": "# 测试博主的视频合集\n\n## 第 1 个视频\n\n正文",
+            "summary": "",
+            "video_count": 1,
+            "done_count": 1,
+            "ok_count": 1,
+            "no_speech_count": 0,
+            "image_count": 0,
+            "failed_count": 0,
+            "failed": [],
+            "detected_language": "zh",
+            "no_speech": False,
+        }
+        with mock.patch.object(main, "ChannelProcessor") as processor_cls:
+            processor_cls.return_value.process_creator = mock.AsyncMock(
+                return_value=result
+            )
+            asyncio.run(main.process_channel_task("chan", CHANNEL_URL, "zh"))
+        self.assertEqual(main.tasks["chan"]["status"], "completed")
+        self.assertTrue(
+            main.progress_store.progress_path(main.TEMP_DIR, CHANNEL_SEC_UID).is_file(),
+            "完成的博主任务必须保留进度文件，供下次提交增量补新视频",
+        )
+
+        # 删除任务 = 重置全量：进度文件随之清理
+        resp = self.client.delete("/api/task/chan")
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(
+            main.progress_store.progress_path(main.TEMP_DIR, CHANNEL_SEC_UID).is_file()
+        )
+
+    def test_completed_channel_task_purges_same_url_paused_records(self):
+        """合集完成后清掉同链接的旧 paused 记录，避免未完成面板残留死条目。"""
+        main.tasks["paused-old"] = {
+            "status": "paused",
+            "progress": 30,
+            "url": CHANNEL_URL,
+            "channel": True,
+            "message": "",
+        }
+        main.tasks["chan"] = {
+            "status": "processing",
+            "progress": 0,
+            "url": CHANNEL_URL,
+            "channel": True,
+            "message": "",
+        }
+        result = {
+            "nickname": "测试博主",
+            "title": "测试博主的视频合集",
+            "paused": False,
+            "script": "# 合集\n\n正文",
+            "summary": "",
+            "video_count": 1,
+            "done_count": 1,
+            "ok_count": 1,
+            "no_speech_count": 0,
+            "image_count": 0,
+            "failed_count": 0,
+            "failed": [],
+            "detected_language": "zh",
+            "no_speech": False,
+        }
+        with mock.patch.object(main, "ChannelProcessor") as processor_cls:
+            processor_cls.return_value.process_creator = mock.AsyncMock(
+                return_value=result
+            )
+            asyncio.run(main.process_channel_task("chan", CHANNEL_URL, "zh"))
+
+        self.assertEqual(main.tasks["chan"]["status"], "completed")
+        self.assertNotIn("paused-old", main.tasks, "同链接 paused 记录应随完成被清掉")
 
 
 class ShutdownTests(unittest.TestCase):
